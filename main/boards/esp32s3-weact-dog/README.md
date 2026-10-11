@@ -3,9 +3,24 @@
 WeAct ESP32-S3 CoreBoard N16R8 + ILI9341 2.4" TFT (animated RoboEyes) + INMP441 mic
 + I2S amp + 4 hobby servos as symbolic legs. Chats through the Xiaozhi cloud.
 
-## Wiring
+## Hardware Specification & Verification Status
+- **SoC**: ESP32-S3 WeAct Studio CoreBoard (N16R8: 16MB Flash, 8MB Octal PSRAM)
+- **LCD Display**: 2.4 inch SPI TFT LCD (Driver: **ILI9341**, 240x320, FSPI port)
+- **Audio DAC & Amp**: WeAct Studio **PCM5100A** I2S DAC + Dual Speaker Module
+  - *Lưu ý đấu nối*: Chân `MC` (Master Clock) nối xuống **GND** để dùng bộ tạo xung nội PLL. Chân `SD` kéo lên **VCC (3.3V)** hoặc để NC nếu có điện trở pull-up.
+- **Microphone**: **INMP441** MEMS I2S Omnidirectional Microphone
+- **Servos**: 4x Hobby Micro Servos (9g SG90/MG90S)
+  - Chân trước trái (FL): GPIO 6 | Chân trước phải (FR): GPIO 7
+  - Chân sau trái (RL): GPIO 4  | Chân sau phải (RR): GPIO 5
+  - *Ghi chú phần cứng*: 2 servo bị kẹt/hỏng cơ học, sẽ cần thay thế hoặc hiệu chỉnh góc an toàn.
+- **Cảm biến tiếp theo (Dự kiến ngày mai)**:
+  - Cảm biến khoảng cách Laser ToF: **VL53L0X** (I2C: SDA GPIO 8, SCL GPIO 9)
+  - Cảm biến gia tốc & con quay hồi chuyển: **MPU6050** (I2C: SDA GPIO 8, SCL GPIO 9)
+  - Tích hợp đàm thoại AI Voice Chatbot (Xiaozhi Client)
 
-| Function | ESP32-S3 GPIO | Module pin |
+## Wiring Table
+
+| Function | ESP32-S3 GPIO | Module pin / Wiring Note |
 |---|---|---|
 | TFT SCLK | 40 | SCK |
 | TFT MOSI | 41 | SDI (MOSI) |
@@ -13,27 +28,24 @@ WeAct ESP32-S3 CoreBoard N16R8 + ILI9341 2.4" TFT (animated RoboEyes) + INMP441 
 | TFT CS | 39 | CS |
 | TFT DC | 38 | DC / RS |
 | TFT RST | 47 | RESET |
-| TFT LED | 3.3 V | LED |
-| TFT VCC / GND | 3.3 V / GND | |
-| Mic WS | 4 | INMP441 WS |
-| Mic SCK | 5 | INMP441 SCK |
-| Mic SD | 6 | INMP441 SD |
-| Mic L/R, GND, VDD | GND, GND, 3.3 V | |
-| Amp BCLK | 15 | BCLK |
-| Amp LRC | 16 | LRC / WS |
-| Amp DIN | 17 | DIN |
-| Amp SD (enable) | 18 | SD / EN |
-| Amp VIN | 5 V (boost) | |
-| Servo front-left | 9 | signal |
-| Servo front-right | 10 | signal |
-| Servo rear-left | 11 | signal |
-| Servo rear-right | 12 | signal |
-| Servo V+ / GND | 5 V (boost) / GND (common with ESP32) | |
+| TFT LED | 3.3 V | LED (Backlight) |
+| TFT VCC / GND | 3.3 V / GND | Nguồn màn hình |
+| I2S BCLK (shared) | 16 | PCM5100A BCK + INMP441 SCK |
+| I2S WS (shared) | 17 | PCM5100A WS + INMP441 WS |
+| Mic Data (DIN) | 14 | INMP441 SD |
+| Mic L/R, GND, VDD | GND, GND, 3.3 V | L/R nối GND (Left channel) |
+| Speaker Data (DOUT) | 15 | PCM5100A DIN |
+| PCM5100A MC | GND | Nối GND để bật PLL nội |
+| PCM5100A SD | 3.3 V (hoặc NC) | Kéo HIGH bật audio |
+| Servo Front-Left (FL) | 6 | Signal |
+| Servo Front-Right (FR) | 7 | Signal |
+| Servo Rear-Left (RL) | 4 | Signal |
+| Servo Rear-Right (RR) | 5 | Signal |
+| Servo V+ / GND | 5 V / GND | Chung GND với ESP32 |
+| I2C SDA (ToF / MPU6050) | 8 | Cảm biến Laser VL53L0X & MPU6050 |
+| I2C SCL (ToF / MPU6050) | 9 | Cảm biến Laser VL53L0X & MPU6050 |
 | Push-to-talk | 0 | BOOT button on the board |
-| Status LED | 48 | onboard WS2812 |
-| Reserved | 7 SDA / 8 SCL (ToF, IMU), 19/20 (USB) | not used yet |
-
-All pins are defined only in `board_pins.h`.
+| Status LED | 48 | Onboard WS2812 |
 
 ## Build (ESP-IDF v6.0.1 or newer)
 

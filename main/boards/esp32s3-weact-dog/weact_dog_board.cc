@@ -22,14 +22,12 @@
 
 #define TAG "WeactDogBoard"
 
-// NoAudioCodecSimplex + amp SD (mute) pin + conservative default volume.
-class DogAudioCodec : public NoAudioCodecSimplex {
+// NoAudioCodecDuplex for shared I2S clock (PCM5100A DAC + INMP441 Mic).
+class DogAudioCodec : public NoAudioCodecDuplex {
 public:
     DogAudioCodec()
-        : NoAudioCodecSimplex(AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE, PIN_AMP_BCLK,
-                              PIN_AMP_LRC, PIN_AMP_DIN,
-                              AUDIO_SPK_STEREO_DUP ? I2S_STD_SLOT_BOTH : I2S_STD_SLOT_LEFT,
-                              PIN_MIC_SCK, PIN_MIC_WS, PIN_MIC_SD, I2S_STD_SLOT_LEFT) {
+        : NoAudioCodecDuplex(AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE,
+                             PIN_I2S_BCLK, PIN_I2S_WS, PIN_I2S_DOUT, PIN_I2S_DIN) {
         output_volume_ = AUDIO_DEFAULT_OUTPUT_VOLUME;  // NVS value wins if the user changed it
         if (PIN_AMP_SD != GPIO_NUM_NC) {
             gpio_config_t io = {};
@@ -43,7 +41,7 @@ public:
 protected:
     void EnableOutput(bool enable) override {
         if (PIN_AMP_SD != GPIO_NUM_NC && !enable) gpio_set_level(PIN_AMP_SD, 0);
-        NoAudioCodecSimplex::EnableOutput(enable);
+        NoAudioCodecDuplex::EnableOutput(enable);
         if (PIN_AMP_SD != GPIO_NUM_NC && enable) gpio_set_level(PIN_AMP_SD, 1);
     }
 };
