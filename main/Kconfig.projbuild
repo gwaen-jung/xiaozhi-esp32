@@ -605,6 +605,9 @@ choice BOARD_TYPE
     config BOARD_TYPE_WDMOMO_CGC_144
         bool "WDMomo ESP32-CGC-144"
         depends on IDF_TARGET_ESP32
+    config BOARD_TYPE_ESP32S3_WEACT_DOG
+        bool "WeAct ESP32-S3 XIAOZHI Dog Robot"
+        depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_WK_ESP32S3_DEV
         bool "WK ESP32-S3 Dev Board (维控智能开发板)"
         depends on IDF_TARGET_ESP32S3
@@ -1156,3 +1159,10 @@ menu "TAIJIPAI_S3_CONFIG"
 endmenu
 
 endmenu
+
+config DOG_EYES_DEBUG_CYCLE
+    bool "XIAOZHI Dog: cycle eye moods on a debug timer (bench test)"
+    depends on BOARD_TYPE_ESP32S3_WEACT_DOG
+    default n
+    help
+        Cycles all eye presets every 2.5 s and logs the measured frame rate.
