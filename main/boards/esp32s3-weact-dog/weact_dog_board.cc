@@ -1,6 +1,7 @@
 // XIAOZHI dog robot on a WeAct ESP32-S3 CoreBoard N16R8:
 // ILI9341 eyes, INMP441 mic, I2S amp, 4 servo legs.
 #include <driver/gpio.h>
+#include <driver/i2c_master.h>
 #include <driver/spi_common.h>
 #include <esp_lcd_ili9341.h>
 #include <esp_lcd_panel_io.h>
@@ -18,31 +19,127 @@
 #include "eyes_display.h"
 #include "led/single_led.h"
 #include "leg_servos.h"
+#include "mcp_server.h"
+#include "mpu6050.h"
+#include "vl53l0x.h"
 #include "wifi_board.h"
 
 #define TAG "WeactDogBoard"
 
-// NoAudioCodecDuplex for shared I2S clock (PCM5100A DAC + INMP441 Mic).
-class DogAudioCodec : public NoAudioCodecDuplex {
+#include <cmath>
+#include <vector>
+
+// Stereo 32-bit Full-Duplex I2S Codec for PCM5100A DAC + INMP441 Mic.
+// PCM5100A internal PLL requires standard stereo 50% duty-cycle WS and 64xFs BCK.
+class DogAudioCodec : public NoAudioCodec {
 public:
-    DogAudioCodec()
-        : NoAudioCodecDuplex(AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE,
-                             PIN_I2S_BCLK, PIN_I2S_WS, PIN_I2S_DOUT, PIN_I2S_DIN) {
-        output_volume_ = AUDIO_DEFAULT_OUTPUT_VOLUME;  // NVS value wins if the user changed it
-        if (PIN_AMP_SD != GPIO_NUM_NC) {
+    DogAudioCodec() {
+        duplex_ = true;
+        input_sample_rate_ = AUDIO_INPUT_SAMPLE_RATE;
+        output_sample_rate_ = AUDIO_OUTPUT_SAMPLE_RATE;
+
+        i2s_chan_config_t chan_cfg = {
+            .id = I2S_NUM_0,
+            .role = I2S_ROLE_MASTER,
+            .dma_desc_num = AUDIO_CODEC_DMA_DESC_NUM,
+            .dma_frame_num = AUDIO_CODEC_DMA_FRAME_NUM,
+            .auto_clear_after_cb = true,
+            .auto_clear_before_cb = false,
+            .intr_priority = 0,
+        };
+        ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &tx_handle_, &rx_handle_));
+
+        i2s_std_config_t std_cfg = {
+            .clk_cfg = {
+                .sample_rate_hz = (uint32_t)output_sample_rate_,
+                .clk_src = I2S_CLK_SRC_DEFAULT,
+                .mclk_multiple = I2S_MCLK_MULTIPLE_256,
+            },
+            .slot_cfg = {
+                .data_bit_width = I2S_DATA_BIT_WIDTH_32BIT,
+                .slot_bit_width = I2S_SLOT_BIT_WIDTH_AUTO,
+                .slot_mode = I2S_SLOT_MODE_STEREO,
+                .slot_mask = I2S_STD_SLOT_BOTH,
+                .ws_width = I2S_DATA_BIT_WIDTH_32BIT,
+                .ws_pol = false,
+                .bit_shift = true,
+            },
+            .gpio_cfg = {
+                .mclk = I2S_GPIO_UNUSED,
+                .bclk = PIN_I2S_BCLK,
+                .ws = PIN_I2S_WS,
+                .dout = PIN_I2S_DOUT,
+                .din = PIN_I2S_DIN,
+                .invert_flags = {
+                    .mclk_inv = false,
+                    .bclk_inv = false,
+                    .ws_inv = false,
+                },
+            },
+        };
+        ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx_handle_, &std_cfg));
+        ESP_ERROR_CHECK(i2s_channel_init_std_mode(rx_handle_, &std_cfg));
+
+        output_volume_ = AUDIO_DEFAULT_OUTPUT_VOLUME;
+        if (static_cast<int>(PIN_AMP_SD) >= 0) {
             gpio_config_t io = {};
-            io.pin_bit_mask = 1ULL << PIN_AMP_SD;
+            int pin = static_cast<int>(PIN_AMP_SD);
+            io.pin_bit_mask = (pin >= 0) ? (1ULL << pin) : 0ULL;
             io.mode = GPIO_MODE_OUTPUT;
             gpio_config(&io);
             gpio_set_level(PIN_AMP_SD, 0);  // muted until output is enabled
         }
+        ESP_LOGI(TAG, "PCM5100A + INMP441 32-bit Stereo Duplex ready (BCK=64*Fs)");
+    }
+
+    int Write(const int16_t* data, int samples) override {
+        std::lock_guard<std::mutex> lock(data_if_mutex_);
+        std::vector<int32_t> buffer(samples * 2);
+
+        int32_t volume_factor = pow(double(output_volume_) / 100.0, 2) * 65536;
+        for (int i = 0; i < samples; i++) {
+            int64_t temp = int64_t(data[i]) * volume_factor;
+            int32_t sample32;
+            if (temp > INT32_MAX) {
+                sample32 = INT32_MAX;
+            } else if (temp < INT32_MIN) {
+                sample32 = INT32_MIN;
+            } else {
+                sample32 = static_cast<int32_t>(temp);
+            }
+            // Duplicate mono voice to both Left and Right speakers on PCM5100A
+            buffer[i * 2]     = sample32;
+            buffer[i * 2 + 1] = sample32;
+        }
+
+        size_t bytes_written;
+        ESP_ERROR_CHECK(i2s_channel_write(tx_handle_, buffer.data(), samples * 2 * sizeof(int32_t), &bytes_written, portMAX_DELAY));
+        return bytes_written / (2 * sizeof(int32_t));
+    }
+
+    int Read(int16_t* dest, int samples) override {
+        size_t bytes_read;
+        constexpr uint32_t kReadTimeoutMs = 200;
+
+        std::vector<int32_t> bit32_buffer(samples * 2);
+        if (i2s_channel_read(rx_handle_, bit32_buffer.data(), samples * 2 * sizeof(int32_t), &bytes_read, kReadTimeoutMs) != ESP_OK) {
+            return 0;
+        }
+
+        int frames = bytes_read / (2 * sizeof(int32_t));
+        for (int i = 0; i < frames; i++) {
+            // INMP441 with L/R tied to GND is on Left slot (i * 2)
+            int32_t value = bit32_buffer[i * 2] >> 12;
+            dest[i] = (value > INT16_MAX) ? INT16_MAX : (value < -INT16_MAX) ? -INT16_MAX : (int16_t)value;
+        }
+        return frames;
     }
 
 protected:
     void EnableOutput(bool enable) override {
-        if (PIN_AMP_SD != GPIO_NUM_NC && !enable) gpio_set_level(PIN_AMP_SD, 0);
-        NoAudioCodecDuplex::EnableOutput(enable);
-        if (PIN_AMP_SD != GPIO_NUM_NC && enable) gpio_set_level(PIN_AMP_SD, 1);
+        if (static_cast<int>(PIN_AMP_SD) >= 0 && !enable) gpio_set_level(PIN_AMP_SD, 0);
+        NoAudioCodec::EnableOutput(enable);
+        if (static_cast<int>(PIN_AMP_SD) >= 0 && enable) gpio_set_level(PIN_AMP_SD, 1);
     }
 };
 
@@ -52,6 +149,9 @@ private:
     EyesDisplay* display_ = nullptr;
     LegServos legs_;
     DogBehavior* behavior_ = nullptr;
+    i2c_master_bus_handle_t i2c_bus_ = nullptr;
+    VL53L0X* tof_sensor_ = nullptr;
+    MPU6050* mpu6050_ = nullptr;
 
     static void LogResetReason() {
         const char* name = "unknown";
@@ -73,6 +173,117 @@ private:
         } else {
             ESP_LOGI(TAG, "Reset reason: %s", name);
         }
+    }
+
+    void InitializeI2c() {
+        i2c_master_bus_config_t i2c_bus_cfg = {
+            .i2c_port = I2C_NUM_0,
+            .sda_io_num = PIN_I2C_SDA,
+            .scl_io_num = PIN_I2C_SCL,
+            .clk_source = I2C_CLK_SRC_DEFAULT,
+            .glitch_ignore_cnt = 7,
+            .intr_priority = 0,
+            .trans_queue_depth = 0,
+            .flags = {
+                .enable_internal_pullup = 1,
+            },
+        };
+        esp_err_t err = i2c_new_master_bus(&i2c_bus_cfg, &i2c_bus_);
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "I2C master bus initialized on SDA=%d, SCL=%d", PIN_I2C_SDA, PIN_I2C_SCL);
+            
+            // 1. ToF Laser distance sensor (VL53L0X / VL53L1X)
+            tof_sensor_ = new VL53L0X(i2c_bus_);
+            if (!tof_sensor_->Init()) {
+                ESP_LOGW(TAG, "ToF distance sensor init failed or sensor not responding at 0x29");
+            }
+
+            // 2. MPU6050 6-Axis Gyro & Accelerometer
+            mpu6050_ = new MPU6050(i2c_bus_);
+            if (!mpu6050_->Init()) {
+                ESP_LOGW(TAG, "MPU6050 init failed or sensor not responding at 0x68");
+            }
+        } else {
+            ESP_LOGE(TAG, "Failed to initialize I2C master bus: %s", esp_err_to_name(err));
+        }
+    }
+
+    void InitializeMcpTools() {
+        auto& mcp_server = McpServer::GetInstance();
+
+        // 1. Tool to control robot dog legs
+        mcp_server.AddTool(
+            "self.control_dog_legs",
+            "Control the 4 leg servos of the robot dog. "
+            "Supported actions: 'stand' (đứng lên), 'sit' (ngồi xuống), "
+            "'crouch' (nằm cúi), 'wiggle' (lắc mông vẫy đuôi), "
+            "'wave' (vẫy chân trước), 'relax' (thả lỏng cơ chân).",
+            PropertyList({Property("action", kPropertyTypeString)}),
+            [this](const PropertyList& properties) -> ToolResult {
+                auto action = properties["action"].value<std::string>();
+                ESP_LOGI(TAG, "MCP control_dog_legs called with action: %s", action.c_str());
+
+                if (action == "stand" || action == "dung" || action == "dung_len") {
+                    legs_.Play(LegMotion::kStand);
+                    return true;
+                } else if (action == "sit" || action == "ngoi" || action == "ngoi_xuong") {
+                    legs_.Play(LegMotion::kSit);
+                    return true;
+                } else if (action == "crouch" || action == "nam" || action == "cui") {
+                    legs_.Play(LegMotion::kCrouch);
+                    return true;
+                } else if (action == "wiggle" || action == "lac" || action == "lac_mong") {
+                    legs_.Play(LegMotion::kWiggle);
+                    return true;
+                } else if (action == "wave" || action == "vay_chan" || action == "chao") {
+                    legs_.Play(LegMotion::kWave);
+                    return true;
+                } else if (action == "relax") {
+                    legs_.Play(LegMotion::kRelax);
+                    return true;
+                }
+                return std::unexpected("Hành động không hợp lệ: " + action);
+            });
+
+        // 2. Tool to get distance from VL53L0X
+        mcp_server.AddTool(
+            "self.get_front_distance",
+            "Get the current distance in centimeters (cm) to obstacles in front of the robot dog from the VL53L0X ToF laser sensor.",
+            PropertyList(),
+            [this](const PropertyList& /*properties*/) -> ToolResult {
+                if (tof_sensor_ == nullptr || !tof_sensor_->IsInitialized()) {
+                    return std::string("Cảm biến khoảng cách VL53L0X chưa được kết nối.");
+                }
+                uint16_t dist_mm = tof_sensor_->ReadDistanceMm();
+                if (dist_mm == 0 || dist_mm >= 8000) {
+                    return std::string("Phía trước thông thoáng, không có vật cản gần (khoảng cách > 2 mét).");
+                }
+                float dist_cm = dist_mm / 10.0f;
+                char buf[64];
+                snprintf(buf, sizeof(buf), "Khoảng cách vật cản phía trước: %.1f cm (%d mm)", dist_cm, dist_mm);
+                return std::string(buf);
+            });
+
+        // 3. Tool to get motion/tilt/pickup status from MPU6050
+        mcp_server.AddTool(
+            "self.get_motion_status",
+            "Get current body posture, tilt angles (pitch, roll in degrees), and pickup/movement status from the MPU6050 IMU sensor.",
+            PropertyList(),
+            [this](const PropertyList& /*properties*/) -> ToolResult {
+                if (mpu6050_ == nullptr || !mpu6050_->IsInitialized()) {
+                    return std::string("Cảm biến gia tốc/góc nghiêng MPU6050 chưa được kết nối.");
+                }
+                MPU6050::MotionData data;
+                if (!mpu6050_->ReadMotion(&data)) {
+                    return std::string("Không đọc được dữ liệu từ MPU6050.");
+                }
+                std::string status = data.is_picked_up ? "Dang bi be len hoac nghieng manh!" : "Dang dung yen on dinh.";
+                char buf[160];
+                snprintf(buf, sizeof(buf), "Pitch: %.1f deg, Roll: %.1f deg. %s", data.pitch_deg, data.roll_deg, status.c_str());
+                return std::string(buf);
+            });
+
+        ESP_LOGI(TAG, "Registered Dog MCP tools: self.control_dog_legs, self.get_front_distance, self.get_motion_status");
     }
 
     void InitializeSpi() {
@@ -133,11 +344,16 @@ public:
         InitializeSpi();
         InitializeDisplay();
         InitializeButtons();
+        InitializeI2c();
+        InitializeMcpTools();
 #ifdef CONFIG_DOG_EYES_DEBUG_CYCLE
         display_->StartDebugCycle(2500);  // M2 bench test: cycle moods
 #endif
         legs_.Begin();  // task only; servos attach after Wi-Fi + audio are up
         behavior_ = new DogBehavior(display_, &legs_);
+        if (tof_sensor_ != nullptr) {
+            behavior_->SetDistanceSensor(tof_sensor_);
+        }
         behavior_->Start();
     }
 

@@ -14,6 +14,7 @@ class DogBehavior {
 public:
     DogBehavior(EyesDisplay* eyes, LegServos* legs);
     void Start();
+    void SetDistanceSensor(class VL53L0X* sensor) { sensor_ = sensor; }
 
     // Called from EyesDisplay hooks (any task). Non-blocking.
     void OnEmotion(const char* emotion);
@@ -33,6 +34,7 @@ private:
 
     EyesDisplay* eyes_;
     LegServos* legs_;
+    class VL53L0X* sensor_ = nullptr;
     QueueHandle_t events_ = nullptr;
     TaskHandle_t task_ = nullptr;
 
@@ -43,4 +45,5 @@ private:
     int64_t state_since_ms_ = 0;
     int64_t last_wiggle_ms_ = 0;
     int64_t surprise_until_ms_ = 0;
+    int64_t last_proximity_trigger_ms_ = 0;
 };

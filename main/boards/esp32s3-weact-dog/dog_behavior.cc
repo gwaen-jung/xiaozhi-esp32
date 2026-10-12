@@ -1,4 +1,5 @@
 #include "dog_behavior.h"
+#include "vl53l0x.h"
 
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -180,6 +181,22 @@ void DogBehavior::Loop() {
             sat_down_ = true;
             legs_->Play(LegMotion::kSit);  // PWM is cut automatically after the hold
         }
+
+        // Distance Sensor (VL53L0X):
+        // If an object is detected closer than 15mm (< 1.5 cm) while idle, automatically start listening!
+        if (sensor_ != nullptr && sensor_->IsInitialized()) {
+            uint16_t dist = sensor_->ReadDistanceMm();
+            if (dist > 0 && dist <= 15) {  // Sát dưới 1.5 cm
+                if (state_ == kDeviceStateIdle && (now - last_proximity_trigger_ms_ > 3000)) {
+                    last_proximity_trigger_ms_ = now;
+                    ESP_LOGI(TAG, "Proximity touch detected (< 1.5 cm, %d mm)! Starting listening...", dist);
+                    eyes_->ApplyPreset(EyePreset::kHappy);
+                    legs_->Play(LegMotion::kWiggle);
+                    app.StartListening();
+                }
+            }
+        }
+
         vTaskDelayUntil(&last, pdMS_TO_TICKS(DOG_POLL_MS));
     }
 }

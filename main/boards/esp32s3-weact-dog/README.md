@@ -13,10 +13,12 @@ WeAct ESP32-S3 CoreBoard N16R8 + ILI9341 2.4" TFT (animated RoboEyes) + INMP441 
   - Chân trước trái (FL): GPIO 6 | Chân trước phải (FR): GPIO 7
   - Chân sau trái (RL): GPIO 4  | Chân sau phải (RR): GPIO 5
   - *Ghi chú phần cứng*: 2 servo bị kẹt/hỏng cơ học, sẽ cần thay thế hoặc hiệu chỉnh góc an toàn.
-- **Cảm biến tiếp theo (Dự kiến ngày mai)**:
-  - Cảm biến khoảng cách Laser ToF: **VL53L0X** (I2C: SDA GPIO 8, SCL GPIO 9)
-  - Cảm biến gia tốc & con quay hồi chuyển: **MPU6050** (I2C: SDA GPIO 8, SCL GPIO 9)
+- **Cảm biến tiếp theo (Cập nhật)**:
+  - Cảm biến khoảng cách Laser ToF: **VL53L0X** (I2C: SDA GPIO 8, SCL GPIO 9, địa chỉ mặc định `0x29`)
+  - Cảm biến định hướng / IMU: **BNO055** / **BNO080/085** (I2C: SDA GPIO 8, SCL GPIO 9)
+    - *Lưu ý quan trọng*: BNO055 mặc định ở địa chỉ `0x28` (chân ADR = GND). Nếu chân ADR kéo lên 3.3V, nó sẽ chuyển sang `0x29` và bị **trùng địa chỉ với VL53L0X (0x29)**. Hãy giữ ADR ở GND để BNO055 ở `0x28`.
   - Tích hợp đàm thoại AI Voice Chatbot (Xiaozhi Client)
+  - Đã đăng ký MCP Tools: `self.control_dog_legs`, `self.get_front_distance`
 
 ## Wiring Table
 
