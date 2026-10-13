@@ -44,15 +44,16 @@ struct LegConfig {
     gpio_num_t gpio;
     int8_t trim_deg;  // added to the logical angle
     bool invert;      // mirror around 90 deg (for the right-hand side usually)
+    bool is_continuous_360; // true = 360 continuous rotation servo (stop at 90 deg)
 };
 
 // TODO(hw-verify): trims and directions per leg after assembly.
 // Logical convention: angle > 90 moves the leg "forward/down" (standing taller).
 static constexpr LegConfig kLegConfig[LEG_COUNT] = {
-    {PIN_SERVO_FL, 0, false},
-    {PIN_SERVO_FR, 0, true},
-    {PIN_SERVO_RL, 0, false},
-    {PIN_SERVO_RR, 0, true},
+    {PIN_SERVO_FL, 0, false, false}, // 180° front-left
+    {PIN_SERVO_FR, 0, true,  true},  // 360° continuous rotation front-right (kept at neutral 90°)
+    {PIN_SERVO_RL, 0, false, false}, // 180° rear-left
+    {PIN_SERVO_RR, 0, true,  false}, // 180° rear-right
 };
 
 #define SERVO_NEUTRAL_DEG        90
@@ -68,7 +69,7 @@ static constexpr LegConfig kLegConfig[LEG_COUNT] = {
 #define SERVO_SLEW_DEG_PER_S     90    // ramp speed limit
 #define SERVO_MAX_MOVING         2     // never more than 2 servos moving at once
 #define SERVO_STAGGER_MS         80    // delay between two servo start-ups
-#define SERVO_DETACH_AFTER_MS    1000  // stop PWM when a pose is held this long
+#define SERVO_DETACH_AFTER_MS    700   // stop PWM after 700ms holding to prevent heat/brownout
 #define SERVO_TICK_MS            20    // control loop period
 #define SERVO_INIT_GAP_MS        300   // sequential attach at boot
 #define SERVO_TASK_PRIORITY      3

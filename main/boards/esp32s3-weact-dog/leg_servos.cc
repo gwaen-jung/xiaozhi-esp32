@@ -108,12 +108,19 @@ void LegServos::Play(LegMotion motion) {
 }
 
 void LegServos::WriteAngle(int leg, float logical) {
-    // Clamp the logical angle, apply mount direction + trim, clamp again.
-    logical = std::fmin(std::fmax(logical, (float)SERVO_MIN_DEG), (float)SERVO_MAX_DEG);
     const LegConfig& cfg = kLegConfig[leg];
-    float phys = cfg.invert ? 180.0f - logical : logical;
-    phys += cfg.trim_deg;
-    phys = std::fmin(std::fmax(phys, (float)SERVO_MIN_DEG), (float)SERVO_MAX_DEG);
+    float phys;
+    if (cfg.is_continuous_360) {
+        // Continuous 360° servo: 90 deg = stop / deadband.
+        // Never drive it continuously away from 90° to prevent endless spinning.
+        phys = 90.0f + cfg.trim_deg;
+    } else {
+        // 180° servo: clamp the logical angle, apply mount direction + trim, clamp again.
+        logical = std::fmin(std::fmax(logical, (float)SERVO_MIN_DEG), (float)SERVO_MAX_DEG);
+        phys = cfg.invert ? 180.0f - logical : logical;
+        phys += cfg.trim_deg;
+        phys = std::fmin(std::fmax(phys, (float)SERVO_MIN_DEG), (float)SERVO_MAX_DEG);
+    }
 
     float pulse_us = SERVO_PULSE_MIN_US + (SERVO_PULSE_MAX_US - SERVO_PULSE_MIN_US) * phys / 180.0f;
     uint32_t period_us = 1000000 / SERVO_PWM_HZ;

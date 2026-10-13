@@ -30,11 +30,11 @@
 #define PIN_AMP_LRC   PIN_I2S_WS
 #define PIN_AMP_DIN   PIN_I2S_DOUT
 
-// ---- Servo legs (Front=6,7 | Rear=4,5) ------------------------------------
-#define PIN_SERVO_FL  GPIO_NUM_6
-#define PIN_SERVO_FR  GPIO_NUM_7
-#define PIN_SERVO_RL  GPIO_NUM_4
-#define PIN_SERVO_RR  GPIO_NUM_5
+// ---- Servo legs (Front: FL=7, FR=4 (360) | Rear: RL=6, RR=5) ----------------
+#define PIN_SERVO_FL  GPIO_NUM_7  // Trên Trái (180°)
+#define PIN_SERVO_FR  GPIO_NUM_4  // Trên Phải (Servo 360°)
+#define PIN_SERVO_RL  GPIO_NUM_6  // Dưới Trái (180°)
+#define PIN_SERVO_RR  GPIO_NUM_5  // Dưới Phải (180°)
 
 // ---- I2C Sensors (VL53L0X ToF Laser + MPU6050 IMU) -------------------------
 #define PIN_I2C_SDA     GPIO_NUM_8

@@ -10,13 +10,12 @@ WeAct ESP32-S3 CoreBoard N16R8 + ILI9341 2.4" TFT (animated RoboEyes) + INMP441 
   - *Lưu ý đấu nối*: Chân `MC` (Master Clock) nối xuống **GND** để dùng bộ tạo xung nội PLL. Chân `SD` kéo lên **VCC (3.3V)** hoặc để NC nếu có điện trở pull-up.
 - **Microphone**: **INMP441** MEMS I2S Omnidirectional Microphone
 - **Servos**: 4x Hobby Micro Servos (9g SG90/MG90S)
-  - Chân trước trái (FL): GPIO 6 | Chân trước phải (FR): GPIO 7
-  - Chân sau trái (RL): GPIO 4  | Chân sau phải (RR): GPIO 5
-  - *Ghi chú phần cứng*: 2 servo bị kẹt/hỏng cơ học, sẽ cần thay thế hoặc hiệu chỉnh góc an toàn.
+  - Chân trên trái (FL): GPIO 7 (180°) | Chân trên phải (FR): GPIO 4 (Servo 360°)
+  - Chân dưới trái (RL): GPIO 6 (180°) | Chân dưới phải (RR): GPIO 5 (180°)
+  - *Ghi chú phần cứng*: Chân trên phải (GPIO 4) là servo 360° quay liên tục (được điều khiển giữ deadband 90°).
 - **Cảm biến tiếp theo (Cập nhật)**:
   - Cảm biến khoảng cách Laser ToF: **VL53L0X** (I2C: SDA GPIO 8, SCL GPIO 9, địa chỉ mặc định `0x29`)
-  - Cảm biến định hướng / IMU: **BNO055** / **BNO080/085** (I2C: SDA GPIO 8, SCL GPIO 9)
-    - *Lưu ý quan trọng*: BNO055 mặc định ở địa chỉ `0x28` (chân ADR = GND). Nếu chân ADR kéo lên 3.3V, nó sẽ chuyển sang `0x29` và bị **trùng địa chỉ với VL53L0X (0x29)**. Hãy giữ ADR ở GND để BNO055 ở `0x28`.
+  - Cảm biến định hướng / IMU: **MPU-6050** (I2C: SDA GPIO 8, SCL GPIO 9, địa chỉ mặc định `0x68`)
   - Tích hợp đàm thoại AI Voice Chatbot (Xiaozhi Client)
   - Đã đăng ký MCP Tools: `self.control_dog_legs`, `self.get_front_distance`
 
@@ -39,10 +38,10 @@ WeAct ESP32-S3 CoreBoard N16R8 + ILI9341 2.4" TFT (animated RoboEyes) + INMP441 
 | Speaker Data (DOUT) | 15 | PCM5100A DIN |
 | PCM5100A MC | GND | Nối GND để bật PLL nội |
 | PCM5100A SD | 3.3 V (hoặc NC) | Kéo HIGH bật audio |
-| Servo Front-Left (FL) | 6 | Signal |
-| Servo Front-Right (FR) | 7 | Signal |
-| Servo Rear-Left (RL) | 4 | Signal |
-| Servo Rear-Right (RR) | 5 | Signal |
+| Servo Trên Trái (FL) | 7 | Signal (180°) |
+| Servo Trên Phải (FR) | 4 | Signal (Servo 360°) |
+| Servo Dưới Trái (RL) | 6 | Signal (180°) |
+| Servo Dưới Phải (RR) | 5 | Signal (180°) |
 | Servo V+ / GND | 5 V / GND | Chung GND với ESP32 |
 | I2C SDA (ToF / MPU6050) | 8 | Cảm biến Laser VL53L0X & MPU6050 |
 | I2C SCL (ToF / MPU6050) | 9 | Cảm biến Laser VL53L0X & MPU6050 |

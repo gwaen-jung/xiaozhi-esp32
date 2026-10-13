@@ -27,11 +27,15 @@ public:
         // Scan I2C bus to find responding device address
         ESP_LOGI(kTag, "Scanning I2C bus...");
         for (uint8_t a = 0x08; a < 0x78; ++a) {
-            if (i2c_master_probe(bus_handle_, a, pdMS_TO_TICKS(5)) == ESP_OK) {
+            esp_err_t probe_err = i2c_master_probe(bus_handle_, a, pdMS_TO_TICKS(5));
+            if (probe_err == ESP_OK) {
                 ESP_LOGI(kTag, "-> Found I2C device at 0x%02X", a);
                 if (a == 0x29 || a == 0x28) {
                     address_ = a;
                 }
+            } else if (probe_err == ESP_ERR_TIMEOUT) {
+                ESP_LOGW(kTag, "I2C probe timeout at 0x%02X! Aborting scan (bus held LOW or unpowered).", a);
+                break;
             }
         }
 

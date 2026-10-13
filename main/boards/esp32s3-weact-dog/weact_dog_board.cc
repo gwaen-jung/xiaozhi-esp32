@@ -176,6 +176,42 @@ private:
     }
 
     void InitializeI2c() {
+        // Diagnostic check of I2C bus pins (GPIO 8 = SDA, GPIO 9 = SCL)
+        gpio_config_t io_conf = {};
+        io_conf.pin_bit_mask = (1ULL << PIN_I2C_SDA) | (1ULL << PIN_I2C_SCL);
+        io_conf.mode = GPIO_MODE_INPUT;
+        io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
+        io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+        io_conf.intr_type = GPIO_INTR_DISABLE;
+        gpio_config(&io_conf);
+        vTaskDelay(pdMS_TO_TICKS(10));
+
+        int sda_lvl = gpio_get_level(PIN_I2C_SDA);
+        int scl_lvl = gpio_get_level(PIN_I2C_SCL);
+        ESP_LOGI(TAG, "I2C pin diagnostics: SDA (IO%d)=%d, SCL (IO%d)=%d",
+                 PIN_I2C_SDA, sda_lvl, PIN_I2C_SCL, scl_lvl);
+
+        // If SDA is stuck low while SCL is high, clock SCL 9 times to un-stick any slave
+        if (sda_lvl == 0 && scl_lvl == 1) {
+            ESP_LOGW(TAG, "SDA line stuck LOW! Performing I2C bus recovery (9 clock pulses on SCL)...");
+            gpio_set_direction(PIN_I2C_SCL, GPIO_MODE_OUTPUT);
+            for (int i = 0; i < 9; ++i) {
+                gpio_set_level(PIN_I2C_SCL, 0);
+                esp_rom_delay_us(10);
+                gpio_set_level(PIN_I2C_SCL, 1);
+                esp_rom_delay_us(10);
+            }
+            gpio_set_direction(PIN_I2C_SCL, GPIO_MODE_INPUT);
+            vTaskDelay(pdMS_TO_TICKS(5));
+            sda_lvl = gpio_get_level(PIN_I2C_SDA);
+            scl_lvl = gpio_get_level(PIN_I2C_SCL);
+            ESP_LOGI(TAG, "After bus recovery: SDA=%d, SCL=%d", sda_lvl, scl_lvl);
+        }
+
+        if (sda_lvl == 0 || scl_lvl == 0) {
+            ESP_LOGW(TAG, "I2C bus line held LOW! Please verify: 1) Common GND; 2) Sensor VCC 3.3V; 3) SDA/SCL not swapped.");
+        }
+
         i2c_master_bus_config_t i2c_bus_cfg = {
             .i2c_port = I2C_NUM_0,
             .sda_io_num = PIN_I2C_SDA,
@@ -211,13 +247,19 @@ private:
     void InitializeMcpTools() {
         auto& mcp_server = McpServer::GetInstance();
 
-        // 1. Tool to control robot dog legs
+        // 1. Tool to control robot dog legs (Cún Xiaozhi Persona)
         mcp_server.AddTool(
             "self.control_dog_legs",
-            "Control the 4 leg servos of the robot dog. "
-            "Supported actions: 'stand' (đứng lên), 'sit' (ngồi xuống), "
-            "'crouch' (nằm cúi), 'wiggle' (lắc mông vẫy đuôi), "
-            "'wave' (vẫy chân trước), 'relax' (thả lỏng cơ chân).",
+            "Bạn là Cún robot Xiaozhi thông minh có 4 chân servo thực tế. "
+            "Khi người dùng bảo bạn đứng, ngồi, nằm, lắc mông, vẫy đuôi, vẫy chân chào hay nghỉ ngơi, "
+            "bạn BẮT BUỘC phải gọi công cụ này để cử động và phản hồi hào hứng như một chú cún đáng yêu.\n"
+            "Các hành động (action):\n"
+            "- 'stand': Đứng thẳng lên 4 chân\n"
+            "- 'sit': Ngồi ngoan xuống\n"
+            "- 'crouch': Nằm rạp / cúi mình xuống\n"
+            "- 'wiggle': Lắc mông, vẫy đuôi vui mừng\n"
+            "- 'wave': Giơ chân trước vẫy chào / bắt tay\n"
+            "- 'relax': Thả lỏng 4 chân nghỉ ngơi.",
             PropertyList({Property("action", kPropertyTypeString)}),
             [this](const PropertyList& properties) -> ToolResult {
                 auto action = properties["action"].value<std::string>();
@@ -248,7 +290,8 @@ private:
         // 2. Tool to get distance from VL53L0X
         mcp_server.AddTool(
             "self.get_front_distance",
-            "Get the current distance in centimeters (cm) to obstacles in front of the robot dog from the VL53L0X ToF laser sensor.",
+            "Đo khoảng cách vật cản phía trước mặt cún (tính bằng cm) bằng cảm biến laser ToF VL53L0X. "
+            "Hãy gọi công cụ này khi người dùng hỏi phía trước có gì, khoảng cách bao xa, hoặc khi cún muốn quan sát.",
             PropertyList(),
             [this](const PropertyList& /*properties*/) -> ToolResult {
                 if (tof_sensor_ == nullptr || !tof_sensor_->IsInitialized()) {
@@ -267,7 +310,8 @@ private:
         // 3. Tool to get motion/tilt/pickup status from MPU6050
         mcp_server.AddTool(
             "self.get_motion_status",
-            "Get current body posture, tilt angles (pitch, roll in degrees), and pickup/movement status from the MPU6050 IMU sensor.",
+            "Đọc trạng thái tư thế, độ nghiêng (pitch, roll) và kiểm tra cún có đang bị bế lên / nhấc bổng hay không từ cảm biến MPU6050. "
+            "Hãy gọi công cụ này khi được hỏi bạn đang đứng hay nằm, hoặc bạn cảm thấy mình đang bị bế lên.",
             PropertyList(),
             [this](const PropertyList& /*properties*/) -> ToolResult {
                 if (mpu6050_ == nullptr || !mpu6050_->IsInitialized()) {
@@ -277,7 +321,7 @@ private:
                 if (!mpu6050_->ReadMotion(&data)) {
                     return std::string("Không đọc được dữ liệu từ MPU6050.");
                 }
-                std::string status = data.is_picked_up ? "Dang bi be len hoac nghieng manh!" : "Dang dung yen on dinh.";
+                std::string status = data.is_picked_up ? "Đang bị bế lên hoặc nghiêng mạnh!" : "Đang đứng yên ổn định.";
                 char buf[160];
                 snprintf(buf, sizeof(buf), "Pitch: %.1f deg, Roll: %.1f deg. %s", data.pitch_deg, data.roll_deg, status.c_str());
                 return std::string(buf);

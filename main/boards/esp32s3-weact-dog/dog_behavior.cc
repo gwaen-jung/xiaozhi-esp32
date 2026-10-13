@@ -183,13 +183,13 @@ void DogBehavior::Loop() {
         }
 
         // Distance Sensor (VL53L0X):
-        // If an object is detected closer than 15mm (< 1.5 cm) while idle, automatically start listening!
+        // If an object is detected closer than 50mm (< 5.0 cm) while idle, automatically start listening!
         if (sensor_ != nullptr && sensor_->IsInitialized()) {
             uint16_t dist = sensor_->ReadDistanceMm();
-            if (dist > 0 && dist <= 15) {  // Sát dưới 1.5 cm
+            if (dist > 0 && dist <= 50) {  // Dưới 5.0 cm (50 mm)
                 if (state_ == kDeviceStateIdle && (now - last_proximity_trigger_ms_ > 3000)) {
                     last_proximity_trigger_ms_ = now;
-                    ESP_LOGI(TAG, "Proximity touch detected (< 1.5 cm, %d mm)! Starting listening...", dist);
+                    ESP_LOGI(TAG, "Proximity hand detected (< 5.0 cm, %d mm)! Starting listening...", dist);
                     eyes_->ApplyPreset(EyePreset::kHappy);
                     legs_->Play(LegMotion::kWiggle);
                     app.StartListening();
