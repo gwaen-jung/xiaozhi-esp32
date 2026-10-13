@@ -228,6 +228,21 @@ private:
         if (err == ESP_OK) {
             ESP_LOGI(TAG, "I2C master bus initialized on SDA=%d, SCL=%d", PIN_I2C_SDA, PIN_I2C_SCL);
             
+            // Full I2C scan to discover ALL responding addresses
+            ESP_LOGI(TAG, "--- Quet toan bo thiet bi I2C tren bus ---");
+            int dev_count = 0;
+            for (uint8_t a = 0x08; a < 0x78; ++a) {
+                if (i2c_master_probe(i2c_bus_, a, 20) == ESP_OK) {
+                    ESP_LOGI(TAG, ">>> Tim thay thiet bi I2C tai dia chi: 0x%02X", a);
+                    dev_count++;
+                }
+            }
+            if (dev_count == 0) {
+                ESP_LOGW(TAG, "Khong tim thay thiet bi I2C nao phan hoi!");
+            } else {
+                ESP_LOGI(TAG, "Tong cong tim thay %d thiet bi I2C tren bus.", dev_count);
+            }
+
             // 1. ToF Laser distance sensor (VL53L0X / VL53L1X)
             tof_sensor_ = new VL53L0X(i2c_bus_);
             if (!tof_sensor_->Init()) {

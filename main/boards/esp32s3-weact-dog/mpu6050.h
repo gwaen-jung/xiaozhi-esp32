@@ -16,6 +16,19 @@ public:
         : bus_handle_(bus_handle), address_(address) {}
 
     bool Init() {
+        // Probe specifically for MPU6050 at 0x68 or 0x69 (AD0 high)
+        ESP_LOGI(kTag, "Probing MPU6050 at 0x68...");
+        if (i2c_master_probe(bus_handle_, 0x68, 50) == ESP_OK) {
+            address_ = 0x68;
+            ESP_LOGI(kTag, "Found MPU6050 at 0x68!");
+        } else if (i2c_master_probe(bus_handle_, 0x69, 50) == ESP_OK) {
+            address_ = 0x69;
+            ESP_LOGI(kTag, "Found MPU6050 at 0x69 (AD0 pin HIGH)!");
+        } else {
+            ESP_LOGW(kTag, "No MPU6050 responding at 0x68 or 0x69");
+            return false;
+        }
+
         if (dev_handle_ == nullptr) {
             i2c_device_config_t dev_cfg = {
                 .dev_addr_length = I2C_ADDR_BIT_LEN_7,
@@ -75,7 +88,7 @@ public:
 
         uint8_t buf[14] = {0};
         uint8_t reg = 0x3B;
-        if (i2c_master_transmit_receive(dev_handle_, &reg, 1, buf, 14, pdMS_TO_TICKS(50)) != ESP_OK) {
+        if (i2c_master_transmit_receive(dev_handle_, &reg, 1, buf, 14, 50) != ESP_OK) {
             return false;
         }
 
@@ -107,11 +120,11 @@ private:
 
     bool WriteReg(uint8_t reg, uint8_t val) {
         uint8_t buf[2] = {reg, val};
-        return i2c_master_transmit(dev_handle_, buf, 2, pdMS_TO_TICKS(50)) == ESP_OK;
+        return i2c_master_transmit(dev_handle_, buf, 2, 50) == ESP_OK;
     }
 
     bool ReadReg(uint8_t reg, uint8_t* val) {
-        return i2c_master_transmit_receive(dev_handle_, &reg, 1, val, 1, pdMS_TO_TICKS(50)) == ESP_OK;
+        return i2c_master_transmit_receive(dev_handle_, &reg, 1, val, 1, 50) == ESP_OK;
     }
 
     i2c_master_bus_handle_t bus_handle_ = nullptr;

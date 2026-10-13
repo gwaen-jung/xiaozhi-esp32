@@ -24,19 +24,17 @@ public:
     bool Init() {
         vTaskDelay(pdMS_TO_TICKS(50));
 
-        // Scan I2C bus to find responding device address
-        ESP_LOGI(kTag, "Scanning I2C bus...");
-        for (uint8_t a = 0x08; a < 0x78; ++a) {
-            esp_err_t probe_err = i2c_master_probe(bus_handle_, a, pdMS_TO_TICKS(5));
-            if (probe_err == ESP_OK) {
-                ESP_LOGI(kTag, "-> Found I2C device at 0x%02X", a);
-                if (a == 0x29 || a == 0x28) {
-                    address_ = a;
-                }
-            } else if (probe_err == ESP_ERR_TIMEOUT) {
-                ESP_LOGW(kTag, "I2C probe timeout at 0x%02X! Aborting scan (bus held LOW or unpowered).", a);
-                break;
-            }
+        // Probe specifically for VL53L0X / VL53L1X default addresses (0x29 or 0x28)
+        ESP_LOGI(kTag, "Probing ToF sensor at 0x29...");
+        if (i2c_master_probe(bus_handle_, 0x29, 50) == ESP_OK) {
+            address_ = 0x29;
+            ESP_LOGI(kTag, "Found ToF sensor at 0x29!");
+        } else if (i2c_master_probe(bus_handle_, 0x28, 50) == ESP_OK) {
+            address_ = 0x28;
+            ESP_LOGI(kTag, "Found ToF sensor at 0x28!");
+        } else {
+            ESP_LOGW(kTag, "No ToF sensor responding at 0x29 or 0x28");
+            return false;
         }
 
         if (dev_handle_ == nullptr) {
@@ -101,21 +99,21 @@ private:
     // ------------------------------------------------------------------------
     bool WriteReg8(uint8_t reg, uint8_t val) {
         uint8_t buf[2] = {reg, val};
-        return i2c_master_transmit(dev_handle_, buf, 2, pdMS_TO_TICKS(50)) == ESP_OK;
+        return i2c_master_transmit(dev_handle_, buf, 2, 50) == ESP_OK;
     }
 
     bool WriteReg8_16(uint8_t reg, uint16_t val) {
         uint8_t buf[3] = {reg, static_cast<uint8_t>(val >> 8), static_cast<uint8_t>(val & 0xFF)};
-        return i2c_master_transmit(dev_handle_, buf, 3, pdMS_TO_TICKS(50)) == ESP_OK;
+        return i2c_master_transmit(dev_handle_, buf, 3, 50) == ESP_OK;
     }
 
     bool ReadReg8(uint8_t reg, uint8_t* val) {
-        return i2c_master_transmit_receive(dev_handle_, &reg, 1, val, 1, pdMS_TO_TICKS(50)) == ESP_OK;
+        return i2c_master_transmit_receive(dev_handle_, &reg, 1, val, 1, 50) == ESP_OK;
     }
 
     bool ReadReg8_16(uint8_t reg, uint16_t* val) {
         uint8_t buf[2] = {0};
-        if (i2c_master_transmit_receive(dev_handle_, &reg, 1, buf, 2, pdMS_TO_TICKS(50)) != ESP_OK) return false;
+        if (i2c_master_transmit_receive(dev_handle_, &reg, 1, buf, 2, 50) != ESP_OK) return false;
         *val = (static_cast<uint16_t>(buf[0]) << 8) | buf[1];
         return true;
     }
@@ -125,24 +123,24 @@ private:
     // ------------------------------------------------------------------------
     bool WriteReg16BitAddr8(uint16_t reg, uint8_t val) {
         uint8_t buf[3] = {static_cast<uint8_t>(reg >> 8), static_cast<uint8_t>(reg & 0xFF), val};
-        return i2c_master_transmit(dev_handle_, buf, 3, pdMS_TO_TICKS(50)) == ESP_OK;
+        return i2c_master_transmit(dev_handle_, buf, 3, 50) == ESP_OK;
     }
 
     bool WriteReg16BitAddr16(uint16_t reg, uint16_t val) {
         uint8_t buf[4] = {static_cast<uint8_t>(reg >> 8), static_cast<uint8_t>(reg & 0xFF),
                           static_cast<uint8_t>(val >> 8), static_cast<uint8_t>(val & 0xFF)};
-        return i2c_master_transmit(dev_handle_, buf, 4, pdMS_TO_TICKS(50)) == ESP_OK;
+        return i2c_master_transmit(dev_handle_, buf, 4, 50) == ESP_OK;
     }
 
     bool ReadReg16BitAddr8(uint16_t reg, uint8_t* val) {
         uint8_t reg_buf[2] = {static_cast<uint8_t>(reg >> 8), static_cast<uint8_t>(reg & 0xFF)};
-        return i2c_master_transmit_receive(dev_handle_, reg_buf, 2, val, 1, pdMS_TO_TICKS(50)) == ESP_OK;
+        return i2c_master_transmit_receive(dev_handle_, reg_buf, 2, val, 1, 50) == ESP_OK;
     }
 
     bool ReadReg16BitAddr16(uint16_t reg, uint16_t* val) {
         uint8_t reg_buf[2] = {static_cast<uint8_t>(reg >> 8), static_cast<uint8_t>(reg & 0xFF)};
         uint8_t data_buf[2] = {0};
-        if (i2c_master_transmit_receive(dev_handle_, reg_buf, 2, data_buf, 2, pdMS_TO_TICKS(50)) != ESP_OK) {
+        if (i2c_master_transmit_receive(dev_handle_, reg_buf, 2, data_buf, 2, 50) != ESP_OK) {
             return false;
         }
         *val = (static_cast<uint16_t>(data_buf[0]) << 8) | data_buf[1];
