@@ -3,8 +3,8 @@
 
 #include "board_pins.h"
 
-// Audio: INMP441 at 16 kHz in, server TTS is 24 kHz Opus out.
-#define AUDIO_INPUT_SAMPLE_RATE  16000
+// Audio: Full-duplex I2S runs at 24 kHz (shared BCLK/WS). AudioService downsamples mic to 16 kHz for VAD/Opus.
+#define AUDIO_INPUT_SAMPLE_RATE  24000
 #define AUDIO_OUTPUT_SAMPLE_RATE 24000
 // Conservative default for small 4 ohm speakers (0..100, changeable by voice).
 #define AUDIO_DEFAULT_OUTPUT_VOLUME 60

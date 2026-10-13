@@ -27,10 +27,10 @@
 
 ### 2. Cảm biến Khoảng cách Laser ToF (VL53L0X)
 - **Tối ưu Driver non-blocking:** Đổi sang cơ chế đọc ngắt liên tục non-blocking trong `vl53l0x.h` (mỗi lần đọc chỉ tốn **0.2ms** I2C, không làm nghẽn CPU).
-- **Ngưỡng kích hoạt chuẩn xác $\le 5.0\text{ cm}$ ($\le 50\text{ mm}$):**
-  - Khi cún đứng trên bàn, khoảng cách tới mặt bàn/vật thể là `~6.4 - 6.8 cm` -> cún đứng yên ngoan ngoãn ở chế độ Chờ (Idle), **không bị tự động nghe nói liên tục**.
-  - **Chốt cờ 1 lần (Edge-triggered):** Đưa tay vào sát mũi cún ($\le 5\text{ cm}$) chỉ kích hoạt lắng nghe **đúng 1 lần**. Khi tay rút ra xa ($> 7\text{ cm}$) cờ mới tự mở lại cho lần chạm tiếp theo.
-  - Khi cún đang nói, đưa tay vào sát mũi ($\le 5\text{ cm}$) sẽ ngắt lời cún tức thì.
+- **Ngưỡng kích hoạt chuẩn xác $\le 6.0\text{ cm}$ ($\le 65\text{ mm}$):**
+  - Khi cún đứng trên bàn, khoảng cách thông thường xa hơn 8cm -> cún đứng yên ngoan ngoãn ở chế độ Chờ (Idle), **không bị tự động nghe nói liên tục**.
+  - **Chốt cờ 1 lần (Edge-triggered):** Đưa tay vào sát mũi cún ($\le 6\text{ cm}$, $\le 65\text{ mm}$) chỉ kích hoạt lắng nghe **đúng 1 lần**. Khi tay rút ra xa ($> 8.5\text{ cm}$) cờ mới tự mở lại cho lần chạm tiếp theo.
+  - Khi cún đang nói, đưa tay vào sát mũi ($\le 6\text{ cm}$) sẽ ngắt lời cún tức thì.
 
 ---
 
@@ -48,7 +48,8 @@
 ---
 
 ### 5. Hệ thống Âm thanh & Màn hình RoboEyes
-- **Loa PCM5100A & Mic INMP441:** Full-duplex 32-bit Stereo Duplex (`BCK = 64 * Fs`), âm thanh to rõ, mic nhạy.
+- **Loa PCM5100A & Mic INMP441:** Full-duplex 32-bit Stereo Duplex (`BCK = 64 * Fs`). Đồng bộ tần số lấy mẫu phần cứng 24 kHz cho cả TX/RX; kích hoạt tự động bộ chuyển đổi âm thanh (Audio Resampler 24kHz -> 16kHz) của ESP-ADF cho AFE/VAD nhận diện giọng nói cực chuẩn.
+- **Tự động nhận diện kênh Mic INMP441:** Hỗ trợ cả 2 trường hợp chân L/R nối GND (Left slot) hoặc nối 3.3V/treo (Right slot), kèm bộ khuếch đại gain số +12dB và log chẩn đoán biên độ âm thanh thời gian thực.
 - **Màn hình mắt RoboEyes (ST7789/ILI9341):** Đổi cảm xúc theo trạng thái máy (Chờ, Kết nối, Lắng nghe, Suy nghĩ, Nói, Vui, Ngạc nhiên).
 
 ---
@@ -73,7 +74,7 @@ Khi cần build hoặc nạp lại firmware:
 ## III. KẾ HOẠCH CHO BUỔI MAI (HOÀN THIỆN TOÀN BỘ DỰ ÁN)
 
 1. **Test đàm thoại AI thực tế với Server Xiaozhi:**
-   - Đưa tay vào sát mũi ($\le 5\text{ cm}$) hoặc gọi wake-word để đánh thức cún.
+   - Đưa tay vào sát mũi ($\le 6\text{ cm}$) hoặc gọi wake-word để đánh thức cún.
    - Nói chuyện tiếng Việt, kiểm tra phản hồi giọng nói và độ nhạy mic.
 2. **Test toàn diện bộ MCP Tools điều khiển cún:**
    - Ra lệnh giọng nói: *"Cún ơi đứng lên!"*, *"Cún ơi ngồi xuống!"*, *"Lắc mông mừng nào!"*, *"Chào bạn đi nào!"*.

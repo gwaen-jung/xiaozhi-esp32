@@ -118,24 +118,50 @@ public:
     }
 
     int Read(int16_t* dest, int samples) override {
-        size_t bytes_read;
-        constexpr uint32_t kReadTimeoutMs = 200;
+        size_t bytes_read = 0;
+        constexpr uint32_t kReadTimeoutMs = 100;
 
-        std::vector<int32_t> bit32_buffer(samples * 2);
-        if (i2s_channel_read(rx_handle_, bit32_buffer.data(), samples * 2 * sizeof(int32_t), &bytes_read, kReadTimeoutMs) != ESP_OK) {
+        if (rx_buf_.size() < (size_t)(samples * 2)) {
+            rx_buf_.resize(samples * 2);
+        }
+        if (i2s_channel_read(rx_handle_, rx_buf_.data(), samples * 2 * sizeof(int32_t), &bytes_read, kReadTimeoutMs) != ESP_OK) {
             return 0;
         }
 
         int frames = bytes_read / (2 * sizeof(int32_t));
+        int64_t max_l = 0, max_r = 0;
         for (int i = 0; i < frames; i++) {
-            // INMP441 with L/R tied to GND is on Left slot (i * 2)
-            int32_t value = bit32_buffer[i * 2] >> 12;
-            dest[i] = (value > INT16_MAX) ? INT16_MAX : (value < -INT16_MAX) ? -INT16_MAX : (int16_t)value;
+            int32_t left = rx_buf_[i * 2];
+            int32_t right = rx_buf_[i * 2 + 1];
+            int64_t al = std::abs((int64_t)left);
+            int64_t ar = std::abs((int64_t)right);
+            if (al > max_l) max_l = al;
+            if (ar > max_r) max_r = ar;
+
+            // Auto-detect active channel (whether INMP441 L/R pin is tied to GND or VDD/float)
+            int32_t raw = (al >= ar) ? left : right;
+
+            // INMP441 produces 24-bit MSB-aligned samples in 32-bit slot (bits 31..8).
+            // >> 14 preserves 18-bit dynamic range with +12dB digital gain for MEMS voice clarity.
+            int32_t value = raw >> 14;
+            dest[i] = (value > INT16_MAX) ? INT16_MAX : (value < -INT16_MAX) ? -INT16_MAX : static_cast<int16_t>(value);
         }
+
+        // Periodic diagnostic telemetry for mic input (every 3 seconds)
+        static int64_t last_mic_log = 0;
+        int64_t now = esp_timer_get_time() / 1000;
+        if (now - last_mic_log > 3000) {
+            last_mic_log = now;
+            ESP_LOGI(TAG, "[Mic Diagnostic] frames=%d, peak_L=%lld, peak_R=%lld (ch=%s)",
+                     frames, max_l >> 14, max_r >> 14, (max_l >= max_r) ? "LEFT" : "RIGHT");
+        }
+
         return frames;
     }
 
 protected:
+    std::vector<int32_t> rx_buf_;
+
     void EnableOutput(bool enable) override {
         if (static_cast<int>(PIN_AMP_SD) >= 0 && !enable) gpio_set_level(PIN_AMP_SD, 0);
         NoAudioCodec::EnableOutput(enable);
