@@ -1,4 +1,5 @@
 #include "leg_servos.h"
+#include "settings.h"
 
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -71,6 +72,7 @@ const char* LegMotionName(LegMotion m) {
         case LegMotion::kSoftWiggle: return "soft_wiggle";
         case LegMotion::kWave: return "wave";
         case LegMotion::kBreathe: return "idle_breathe";
+        case LegMotion::kZero: return "zero";
         case LegMotion::kRelax: return "relax";
     }
     return "?";
@@ -89,6 +91,7 @@ int64_t LegServos::NowMs() { return esp_timer_get_time() / 1000; }
 
 void LegServos::Begin() {
     if (task_ != nullptr) return;
+    LoadSettings();
     queue_ = xQueueCreate(4, sizeof(uint8_t));
     xTaskCreate(&LegServos::TaskEntry, "legs", SERVO_TASK_STACK, this, SERVO_TASK_PRIORITY, &task_);
 }
@@ -111,14 +114,19 @@ void LegServos::WriteAngle(int leg, float logical) {
     const LegConfig& cfg = kLegConfig[leg];
     float phys;
     if (cfg.is_continuous_360) {
-        // Continuous 360° servo: 90 deg = stop / deadband.
-        // Never drive it continuously away from 90° to prevent endless spinning.
-        phys = 90.0f + cfg.trim_deg;
+        // Continuous 360° servo: 90 deg = stop.
+        // Cho phép tinh chỉnh vùng chết 80..100 độ để dừng tuyệt đối, không cho quay tít
+        float clamped = std::fmin(std::fmax(logical, 80.0f), 100.0f);
+        phys = clamped + cfg.trim_deg;
     } else {
         // 180° servo: clamp the logical angle, apply mount direction + trim, clamp again.
         logical = std::fmin(std::fmax(logical, (float)SERVO_MIN_DEG), (float)SERVO_MAX_DEG);
-        phys = cfg.invert ? 180.0f - logical : logical;
-        phys += cfg.trim_deg;
+        if (logical == 0.0f) {
+            phys = 0.0f + cfg.trim_deg; // 0 độ hiệu chuẩn tuyệt đối cho toàn bộ servo
+        } else {
+            phys = cfg.invert ? 180.0f - logical : logical;
+            phys += cfg.trim_deg;
+        }
         phys = std::fmin(std::fmax(phys, (float)SERVO_MIN_DEG), (float)SERVO_MAX_DEG);
     }
 
@@ -135,7 +143,110 @@ void LegServos::Detach(int leg) {
     legs_[leg].attached = false;
 }
 
+void LegServos::SetLegAngle(int leg, float deg) {
+    if (!initialized_ || leg < 0 || leg >= LEG_COUNT) return;
+    frames_ = nullptr;
+    frame_count_ = 0;
+    legs_[leg].target = deg;
+    legs_[leg].moving = true;
+    if (!legs_[leg].attached) WriteAngle(leg, legs_[leg].current);
+    busy_ = true;
+}
+
+float LegServos::GetLegAngle(int leg) const {
+    if (leg < 0 || leg >= LEG_COUNT) return 90.0f;
+    return legs_[leg].target;
+}
+
+uint8_t LegServos::GetStandAngle(int leg) const {
+    if (leg < 0 || leg >= LEG_COUNT) return 90;
+    return stand_angle_[leg];
+}
+
+void LegServos::LoadSettings() {
+    Settings settings("dog_legs");
+    stand_angle_[0] = (uint8_t)settings.GetInt("stand_fl", SERVO_STAND_FL_DEG);
+    stand_angle_[1] = (uint8_t)settings.GetInt("stand_fr", SERVO_STAND_FR_DEG);
+    stand_angle_[2] = (uint8_t)settings.GetInt("stand_rl", SERVO_STAND_RL_DEG);
+    stand_angle_[3] = (uint8_t)settings.GetInt("stand_rr", SERVO_STAND_RR_DEG);
+    ESP_LOGI(TAG, "Loaded stand angles from NVS: FL=%d, FR=%d, RL=%d, RR=%d",
+             stand_angle_[0], stand_angle_[1], stand_angle_[2], stand_angle_[3]);
+}
+
+void LegServos::SaveStandPose() {
+    Settings settings("dog_legs", true);
+    for (int i = 0; i < LEG_COUNT; ++i) {
+        stand_angle_[i] = (uint8_t)std::round(legs_[i].target);
+    }
+    settings.SetInt("stand_fl", stand_angle_[0]);
+    settings.SetInt("stand_fr", stand_angle_[1]);
+    settings.SetInt("stand_rl", stand_angle_[2]);
+    settings.SetInt("stand_rr", stand_angle_[3]);
+    ESP_LOGI(TAG, "Saved stand angles to NVS: FL=%d, FR=%d, RL=%d, RR=%d",
+             stand_angle_[0], stand_angle_[1], stand_angle_[2], stand_angle_[3]);
+}
+
+void LegServos::ResetStandPose() {
+    Settings settings("dog_legs", true);
+    settings.EraseAll();
+    stand_angle_[0] = SERVO_STAND_FL_DEG;
+    stand_angle_[1] = SERVO_STAND_FR_DEG;
+    stand_angle_[2] = SERVO_STAND_RL_DEG;
+    stand_angle_[3] = SERVO_STAND_RR_DEG;
+    ESP_LOGI(TAG, "Reset stand angles to defaults (FL=%d, FR=%d, RL=%d, RR=%d)",
+             stand_angle_[0], stand_angle_[1], stand_angle_[2], stand_angle_[3]);
+    Play(LegMotion::kStand);
+}
+
 void LegServos::LoadMotion(LegMotion m) {
+    if (m == LegMotion::kStand || m == LegMotion::kQuickStand) {
+        ESP_LOGI(TAG, "play stand (FL=%d, FR=%d, RL=%d, RR=%d)",
+                 stand_angle_[0], stand_angle_[1], stand_angle_[2], stand_angle_[3]);
+        frames_ = nullptr;
+        frame_count_ = 0;
+        for (int i = 0; i < LEG_COUNT; ++i) {
+            legs_[i].target = stand_angle_[i];
+            legs_[i].moving = true;
+        }
+        quick_ = (m == LegMotion::kQuickStand);
+        busy_ = true;
+        return;
+    }
+    if (m == LegMotion::kZero) {
+        ESP_LOGI(TAG, "play zero (dua chan 180 ve 0 do, chan 360 giu dung)");
+        frames_ = nullptr;
+        frame_count_ = 0;
+        for (int i = 0; i < LEG_COUNT; ++i) {
+            legs_[i].target = kLegConfig[i].is_continuous_360 ? stand_angle_[i] : 0;
+            legs_[i].moving = true;
+        }
+        busy_ = true;
+        return;
+    }
+    if (m == LegMotion::kSit) {
+        ESP_LOGI(TAG, "play sit (chan 360 giu dung, chan 180 nghieng ngoi)");
+        frames_ = nullptr;
+        frame_count_ = 0;
+        legs_[0].target = std::fmin((float)stand_angle_[0] + 15.0f, 180.0f);
+        legs_[1].target = stand_angle_[1];
+        legs_[2].target = stand_angle_[2];
+        legs_[3].target = std::fmin((float)stand_angle_[3] + 35.0f, 180.0f);
+        for (int i = 0; i < LEG_COUNT; ++i) legs_[i].moving = true;
+        busy_ = true;
+        return;
+    }
+    if (m == LegMotion::kCrouch) {
+        ESP_LOGI(TAG, "play crouch (chan 360 giu dung, chan 180 cui)");
+        frames_ = nullptr;
+        frame_count_ = 0;
+        legs_[0].target = std::fmax((float)stand_angle_[0] - 8.0f, 0.0f);
+        legs_[1].target = stand_angle_[1];
+        legs_[2].target = stand_angle_[2];
+        legs_[3].target = std::fmax((float)stand_angle_[3] - 25.0f, 0.0f);
+        for (int i = 0; i < LEG_COUNT; ++i) legs_[i].moving = true;
+        busy_ = true;
+        return;
+    }
     if (m == LegMotion::kRelax) {
         frames_ = nullptr;
         frame_count_ = 0;
@@ -185,10 +296,9 @@ void LegServos::Loop() {
                     ch.duty = 0;
                     ch.hpoint = 0;
                     ESP_ERROR_CHECK(ledc_channel_config(&ch));
-                    // One servo at a time; position before first power-up is
-                    // unknown, so this single jump is unavoidable.
-                    legs_[i].current = legs_[i].target = SERVO_NEUTRAL_DEG;
-                    WriteAngle(i, SERVO_NEUTRAL_DEG);
+                    // Gắn servo trực tiếp tại góc đứng đã lưu trong NVS
+                    legs_[i].current = legs_[i].target = stand_angle_[i];
+                    WriteAngle(i, stand_angle_[i]);
                     legs_[i].settled_ms = NowMs();
                     ESP_LOGI(TAG, "attached leg %d on GPIO%d", i, (int)kLegConfig[i].gpio);
                     vTaskDelay(pdMS_TO_TICKS(SERVO_INIT_GAP_MS));

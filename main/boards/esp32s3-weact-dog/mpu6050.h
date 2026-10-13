@@ -106,7 +106,18 @@ public:
 
         // Total acceleration magnitude
         float total_g = sqrtf(out->ax_g * out->ax_g + out->ay_g * out->ay_g + out->az_g * out->az_g);
-        out->is_picked_up = (total_g < 0.7f || total_g > 1.4f || fabsf(out->pitch_deg) > 30.0f || fabsf(out->roll_deg) > 30.0f);
+        // Ignore read glitches / zero-byte errors
+        if (total_g < 0.4f || total_g > 3.0f) {
+            out->is_picked_up = false;
+            last_data_ = *out;
+            return true;
+        }
+
+        // MPU6050 is mounted inverted on robot chassis, so normal resting roll is ~ ±180 deg.
+        float pitch_dev = fabsf(out->pitch_deg);
+        float roll_dev = fabsf(fabsf(out->roll_deg) - 180.0f);
+        // Only trigger pickup if the robot body is truly tilted sideways or lifted (> 45 deg tilt)
+        out->is_picked_up = (pitch_dev > 45.0f || roll_dev > 45.0f);
 
         last_data_ = *out;
         return true;

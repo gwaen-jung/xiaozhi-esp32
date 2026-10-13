@@ -247,20 +247,19 @@ private:
     }
 
     uint16_t ReadDistanceL0X() {
-        uint8_t int_status = 0;
-        int64_t start = esp_timer_get_time();
-        while (true) {
-            if (ReadReg8(0x13, &int_status) && (int_status & 0x07) != 0) break;
-            if ((esp_timer_get_time() - start) > 50000) return last_distance_mm_;
-            vTaskDelay(pdMS_TO_TICKS(5));
-        }
+        if (!initialized_) return 0;
 
-        uint16_t range = 0;
-        if (ReadReg8_16(0x1E, &range)) {
-            WriteReg8(0x0B, 0x01);
-            if (range > 8000) range = 8190;
-            last_distance_mm_ = range;
-            return range;
+        uint8_t int_status = 0;
+        if (ReadReg8(0x13, &int_status) && (int_status & 0x07) != 0) {
+            uint16_t range = 0;
+            if (ReadReg8_16(0x1E, &range)) {
+                WriteReg8(0x0B, 0x01);  // Clear interrupt
+                if (range >= 8000) {
+                    last_distance_mm_ = 8190;  // Out of range / open space
+                } else {
+                    last_distance_mm_ = range;
+                }
+            }
         }
         return last_distance_mm_;
     }

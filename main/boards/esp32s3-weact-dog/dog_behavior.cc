@@ -1,6 +1,8 @@
 #include "dog_behavior.h"
+#include "mpu6050.h"
 #include "vl53l0x.h"
 
+#include <cmath>
 #include <esp_log.h>
 #include <esp_timer.h>
 
@@ -182,17 +184,98 @@ void DogBehavior::Loop() {
             legs_->Play(LegMotion::kSit);  // PWM is cut automatically after the hold
         }
 
-        // Distance Sensor (VL53L0X):
-        // If an object is detected closer than 50mm (< 5.0 cm) while idle, automatically start listening!
-        if (sensor_ != nullptr && sensor_->IsInitialized()) {
-            uint16_t dist = sensor_->ReadDistanceMm();
-            if (dist > 0 && dist <= 50) {  // Dưới 5.0 cm (50 mm)
-                if (state_ == kDeviceStateIdle && (now - last_proximity_trigger_ms_ > 3000)) {
-                    last_proximity_trigger_ms_ = now;
-                    ESP_LOGI(TAG, "Proximity hand detected (< 5.0 cm, %d mm)! Starting listening...", dist);
+        // 1) Cảm biến Khoảng cách ToF (đọc mỗi 100ms):
+        uint16_t dist = 0;
+        bool has_dist = (sensor_ != nullptr && sensor_->IsInitialized());
+        static int64_t last_dist_read_ms = 0;
+        if (has_dist && (now - last_dist_read_ms > 100)) {
+            last_dist_read_ms = now;
+            dist = sensor_->ReadDistanceMm();
+        } else if (has_dist) {
+            dist = sensor_->GetLastDistanceMm();
+        }
+
+        // Cảm biến Gia tốc/Góc nghiêng MPU6050 (đọc so le với ToF mỗi 100ms):
+        static int64_t last_mpu_read_ms = 0;
+        MPU6050::MotionData motion;
+        bool has_motion = false;
+        if (mpu_ != nullptr && mpu_->IsInitialized() && (now - last_mpu_read_ms > 100)) {
+            last_mpu_read_ms = now;
+            has_motion = mpu_->ReadMotion(&motion);
+        } else if (mpu_ != nullptr && mpu_->IsInitialized()) {
+            motion = mpu_->GetLastMotion();
+            has_motion = true;
+        }
+
+        if (now - last_telemetry_ms_ > 1000) {
+            last_telemetry_ms_ = now;
+            if (has_dist && has_motion) {
+                float total_g = sqrtf(motion.ax_g * motion.ax_g + motion.ay_g * motion.ay_g + motion.az_g * motion.az_g);
+                ESP_LOGI(TAG, "[Telemetry] ToF: %u mm (%.1f cm) | MPU: Pitch=%.1f°, Roll=%.1f°, Accel=%.2fg | State=%s",
+                         dist, dist / 10.0f, motion.pitch_deg, motion.roll_deg, total_g,
+                         motion.is_picked_up ? "PICKED UP" : "GROUND");
+            } else if (has_dist) {
+                ESP_LOGI(TAG, "[Telemetry] ToF: %u mm (%.1f cm)", dist, dist / 10.0f);
+            } else if (has_motion) {
+                ESP_LOGI(TAG, "[Telemetry] MPU: Pitch=%.1f°, Roll=%.1f°, PickedUp=%s",
+                         motion.pitch_deg, motion.roll_deg, motion.is_picked_up ? "YES" : "NO");
+            }
+        }
+
+        // 2) Distance Proximity Trigger (VL53L0X):
+        // Chỉ kích hoạt khi khoảng cách ToF <= 5.0 cm (<= 50 mm)
+        // Dùng cờ chốt (Edge-triggered): Chỉ kích hoạt ĐÚNG 1 LẦN khi đưa tay vào sát mũi cún.
+        // Phải rút tay ra xa (> 7cm) rồi đưa lại mới kích hoạt lần kế tiếp. Không bị lặp vô tận!
+        static bool hand_was_near = false;
+        bool hand_is_near = (has_dist && dist > 0 && dist <= 50);
+
+        if (hand_is_near && !hand_was_near) {
+            hand_was_near = true;
+            DeviceState cur_state = app.GetDeviceState();
+            if (cur_state == kDeviceStateIdle) {
+                ESP_LOGI(TAG, "🖐️ Dua tay sat mui cún (ToF <= 5cm, %d mm)! Bat lang nghe...", dist);
+                if (sat_down_) {
+                    sat_down_ = false;
+                    legs_->Play(LegMotion::kStand);
+                }
+                app.ToggleChatState();
+            } else if (cur_state == kDeviceStateSpeaking) {
+                // Đưa tay chạm sát mũi khi đang nói để ngắt lời
+                ESP_LOGI(TAG, "🖐️ Dua tay sat mui khi dang noi -> Ngat loi!");
+                app.AbortSpeaking(kAbortReasonNone);
+            }
+        } else if (!hand_is_near && (dist > 70 || dist == 0)) {
+            // Tay đã rút ra xa (> 7.0 cm), reset cờ để sẵn sàng cho lần chạm tiếp theo
+            hand_was_near = false;
+        }
+
+        // 3) Motion & Pick-up reaction (MPU6050):
+        // Dùng bộ lọc debounce (giữ liên tục >= 400ms) và chỉ nhận diện khi chân đang ĐỨNG YÊN
+        // để rung lắc của servo không bao giờ gây kích hoạt nhầm lẫn.
+        static int pickup_streak = 0;
+        static int ground_streak = 0;
+
+        if (has_motion && !legs_->busy()) {
+            if (motion.is_picked_up) {
+                ground_streak = 0;
+                pickup_streak++;
+                if (pickup_streak >= 4 && !was_picked_up_) {
+                    was_picked_up_ = true;
+                    ESP_LOGI(TAG, "🐶 Cun bi be len / lat ngua! (Pitch=%.1f°, Roll=%.1f°)",
+                             motion.pitch_deg, motion.roll_deg);
+                    eyes_->ApplyPreset(EyePreset::kSurprised);
+                    eyes_->SetCuriosity(true);
+                    surprise_until_ms_ = now + DOG_SURPRISE_MS;
+                    legs_->Play(LegMotion::kQuickStand);
+                }
+            } else {
+                pickup_streak = 0;
+                ground_streak++;
+                if (ground_streak >= 3 && was_picked_up_) {
+                    was_picked_up_ = false;
+                    ESP_LOGI(TAG, "🐶 Cun da duoc dat an toan xuong mat ban/san nha!");
+                    eyes_->SetCuriosity(false);
                     eyes_->ApplyPreset(EyePreset::kHappy);
-                    legs_->Play(LegMotion::kWiggle);
-                    app.StartListening();
                 }
             }
         }

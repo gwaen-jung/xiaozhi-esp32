@@ -298,8 +298,68 @@ private:
                 } else if (action == "relax") {
                     legs_.Play(LegMotion::kRelax);
                     return true;
+                } else if (action == "zero" || action == "0" || action == "ve_0") {
+                    legs_.Play(LegMotion::kZero);
+                    return true;
+                } else if (action == "save" || action == "luu" || action == "luu_goc") {
+                    legs_.SaveStandPose();
+                    return true;
+                } else if (action == "reset_pose" || action == "khoi_phuc") {
+                    legs_.ResetStandPose();
+                    return true;
                 }
                 return std::unexpected("Hành động không hợp lệ: " + action);
+            });
+
+        // 1b. Tool to set single leg angle (tinh chỉnh từng chân 0..180 độ)
+        mcp_server.AddTool(
+            "self.set_leg_angle",
+            "Điều khiển góc quay của một chân servo cụ thể (0 đến 180 độ). "
+            "Chân gồm: 'FL' (trước trái), 'FR' (trước phải - servo 360°), 'RL' (sau trái), 'RR' (sau phải).",
+            PropertyList({Property("leg", kPropertyTypeString), Property("angle", kPropertyTypeInteger)}),
+            [this](const PropertyList& properties) -> ToolResult {
+                auto leg_str = properties["leg"].value<std::string>();
+                int angle = properties["angle"].value<int>();
+                int leg_idx = -1;
+                if (leg_str == "FL" || leg_str == "fl" || leg_str == "truoc_trai") leg_idx = 0;
+                else if (leg_str == "FR" || leg_str == "fr" || leg_str == "truoc_phai") leg_idx = 1;
+                else if (leg_str == "RL" || leg_str == "rl" || leg_str == "sau_trai") leg_idx = 2;
+                else if (leg_str == "RR" || leg_str == "rr" || leg_str == "sau_phai") leg_idx = 3;
+                else return std::unexpected("Tên chân không hợp lệ (hãy dùng FL, FR, RL, RR): " + leg_str);
+
+                legs_.SetLegAngle(leg_idx, (float)angle);
+                char buf[64];
+                snprintf(buf, sizeof(buf), "Đã chỉnh chân %s về góc %d độ", leg_str.c_str(), angle);
+                return std::string(buf);
+            });
+
+        // 1c. Tool to save current leg angles as default stand pose in Flash NVS
+        mcp_server.AddTool(
+            "self.save_stand_pose",
+            "Lưu góc đứng hiện tại của 4 chân vào bộ nhớ Flash NVS vĩnh viễn. "
+            "Sau khi gọi công cụ này, mỗi lần cún khởi động lại máy sẽ tự động đứng theo đúng các góc này mà không bị vặn lệch.",
+            PropertyList(),
+            [this](const PropertyList& /*properties*/) -> ToolResult {
+                legs_.SaveStandPose();
+                char buf[256];
+                snprintf(buf, sizeof(buf),
+                         "Đã lưu góc đứng thành công vào Flash NVS! FL=%d°, FR=%d°, RL=%d°, RR=%d°. Từ nay khi khởi động lại, cún sẽ luôn đứng theo góc này.",
+                         legs_.GetStandAngle(0), legs_.GetStandAngle(1), legs_.GetStandAngle(2), legs_.GetStandAngle(3));
+                return std::string(buf);
+            });
+
+        // 1d. Tool to get current and saved stand leg angles
+        mcp_server.AddTool(
+            "self.get_leg_angles",
+            "Xem góc hiện tại và góc đứng đã lưu trong Flash NVS của 4 chân (FL, FR, RL, RR).",
+            PropertyList(),
+            [this](const PropertyList& /*properties*/) -> ToolResult {
+                char buf[256];
+                snprintf(buf, sizeof(buf),
+                         "Góc hiện tại: FL=%.0f°, FR=%.0f°, RL=%.0f°, RR=%.0f° | Góc đứng đã lưu: FL=%d°, FR=%d°, RL=%d°, RR=%d°",
+                         legs_.GetLegAngle(0), legs_.GetLegAngle(1), legs_.GetLegAngle(2), legs_.GetLegAngle(3),
+                         legs_.GetStandAngle(0), legs_.GetStandAngle(1), legs_.GetStandAngle(2), legs_.GetStandAngle(3));
+                return std::string(buf);
             });
 
         // 2. Tool to get distance from VL53L0X
@@ -412,6 +472,9 @@ public:
         behavior_ = new DogBehavior(display_, &legs_);
         if (tof_sensor_ != nullptr) {
             behavior_->SetDistanceSensor(tof_sensor_);
+        }
+        if (mpu6050_ != nullptr) {
+            behavior_->SetMotionSensor(mpu6050_);
         }
         behavior_->Start();
     }
