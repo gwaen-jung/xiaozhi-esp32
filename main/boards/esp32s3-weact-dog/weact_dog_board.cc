@@ -9,6 +9,8 @@
 #include <esp_lcd_panel_vendor.h>
 #include <esp_log.h>
 #include <esp_system.h>
+#include <esp_rom_gpio.h>
+#include <soc/gpio_sig_map.h>
 
 #include "application.h"
 #include "button.h"
@@ -38,6 +40,28 @@ public:
         input_sample_rate_ = AUDIO_INPUT_SAMPLE_RATE;
         output_sample_rate_ = AUDIO_OUTPUT_SAMPLE_RATE;
 
+        // Ensure pins can be read by software gpio_get_level diagnostics
+        gpio_input_enable(PIN_I2S_BCLK);
+        gpio_input_enable(PIN_I2S_WS);
+        gpio_input_enable(PIN_I2S_DIN);
+
+        // Hardware Line Test for DIN (GPIO 14) to detect short-circuit or floating line
+        gpio_reset_pin(PIN_I2S_DIN);
+        gpio_set_direction(PIN_I2S_DIN, GPIO_MODE_INPUT);
+        gpio_pullup_en(PIN_I2S_DIN);
+        gpio_pulldown_dis(PIN_I2S_DIN);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        int din_pu = gpio_get_level(PIN_I2S_DIN);
+
+        gpio_pulldown_en(PIN_I2S_DIN);
+        gpio_pullup_dis(PIN_I2S_DIN);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        int din_pd = gpio_get_level(PIN_I2S_DIN);
+
+        gpio_pullup_dis(PIN_I2S_DIN);
+        gpio_pulldown_dis(PIN_I2S_DIN);
+        ESP_LOGI(TAG, "DIN (IO%d) Hardware Line Test: PullUp=%d, PullDown=%d", PIN_I2S_DIN, din_pu, din_pd);
+
         i2s_chan_config_t chan_cfg = {
             .id = I2S_NUM_0,
             .role = I2S_ROLE_MASTER,
@@ -49,27 +73,35 @@ public:
         };
         ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &tx_handle_, &rx_handle_));
 
-        i2s_std_config_t tx_std_cfg = {
+        i2s_std_config_t std_cfg = {
             .clk_cfg = {
                 .sample_rate_hz = (uint32_t)output_sample_rate_,
                 .clk_src = I2S_CLK_SRC_DEFAULT,
+#if SOC_I2S_HW_VERSION_2
+                .ext_clk_freq_hz = 0,
+#endif
                 .mclk_multiple = I2S_MCLK_MULTIPLE_256,
             },
             .slot_cfg = {
                 .data_bit_width = I2S_DATA_BIT_WIDTH_32BIT,
-                .slot_bit_width = I2S_SLOT_BIT_WIDTH_AUTO,
+                .slot_bit_width = I2S_SLOT_BIT_WIDTH_32BIT,
                 .slot_mode = I2S_SLOT_MODE_STEREO,
                 .slot_mask = I2S_STD_SLOT_BOTH,
-                .ws_width = I2S_DATA_BIT_WIDTH_32BIT,
+                .ws_width = 32,
                 .ws_pol = false,
                 .bit_shift = true,
+#if SOC_I2S_HW_VERSION_2
+                .left_align = true,
+                .big_endian = false,
+                .bit_order_lsb = false,
+#endif
             },
             .gpio_cfg = {
                 .mclk = I2S_GPIO_UNUSED,
                 .bclk = PIN_I2S_BCLK,
                 .ws = PIN_I2S_WS,
                 .dout = PIN_I2S_DOUT,
-                .din = I2S_GPIO_UNUSED,
+                .din = PIN_I2S_DIN,
                 .invert_flags = {
                     .mclk_inv = false,
                     .bclk_inv = false,
@@ -77,12 +109,16 @@ public:
                 },
             },
         };
-        ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx_handle_, &tx_std_cfg));
+        // Initialize TX FIRST as Master clock generator
+        ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx_handle_, &std_cfg));
+        // Initialize RX SECOND as Full-Duplex Slave (shares TX BCLK & WS internally)
+        ESP_ERROR_CHECK(i2s_channel_init_std_mode(rx_handle_, &std_cfg));
 
-        i2s_std_config_t rx_std_cfg = tx_std_cfg;
-        rx_std_cfg.gpio_cfg.dout = I2S_GPIO_UNUSED;
-        rx_std_cfg.gpio_cfg.din = PIN_I2S_DIN;
-        ESP_ERROR_CHECK(i2s_channel_init_std_mode(rx_handle_, &rx_std_cfg));
+        // Start BOTH channels immediately and keep them running continuously via DMA.
+        // With auto_clear_after_cb=true, TX outputs silent zeroes when idle while
+        // maintaining the 64-clock BCLK/WS frame (1.024 MHz) strictly required by INMP441.
+        ESP_ERROR_CHECK(i2s_channel_enable(tx_handle_));
+        ESP_ERROR_CHECK(i2s_channel_enable(rx_handle_));
 
         output_volume_ = AUDIO_DEFAULT_OUTPUT_VOLUME;
         if (static_cast<int>(PIN_AMP_SD) >= 0) {
@@ -91,33 +127,37 @@ public:
             io.pin_bit_mask = (pin >= 0) ? (1ULL << pin) : 0ULL;
             io.mode = GPIO_MODE_OUTPUT;
             gpio_config(&io);
-            gpio_set_level(PIN_AMP_SD, 0);  // muted until output is enabled
+            gpio_set_level(PIN_AMP_SD, 1);
         }
-        ESP_LOGI(TAG, "PCM5100A + INMP441 32-bit Stereo Duplex ready (BCK=64*Fs)");
+        ESP_LOGI(TAG, "PCM5100A + INMP441 32-bit Slot Stereo Duplex ready (64 BCLK/frame = 1.024 MHz)");
+    }
+
+    ~DogAudioCodec() override {
+        if (tx_handle_ != nullptr) {
+            i2s_channel_disable(tx_handle_);
+        }
+        if (rx_handle_ != nullptr) {
+            i2s_channel_disable(rx_handle_);
+        }
     }
 
     int Write(const int16_t* data, int samples) override {
         std::lock_guard<std::mutex> lock(data_if_mutex_);
-        std::vector<int32_t> buffer(samples * 2);
+        if (tx_buf32_.size() < (size_t)(samples * 2)) {
+            tx_buf32_.resize(samples * 2);
+        }
 
-        int32_t volume_factor = pow(double(output_volume_) / 100.0, 2) * 65536;
+        int32_t volume_factor = output_volume_; // 0..100
         for (int i = 0; i < samples; i++) {
-            int64_t temp = int64_t(data[i]) * volume_factor;
-            int32_t sample32;
-            if (temp > INT32_MAX) {
-                sample32 = INT32_MAX;
-            } else if (temp < INT32_MIN) {
-                sample32 = INT32_MIN;
-            } else {
-                sample32 = static_cast<int32_t>(temp);
-            }
-            // Duplicate mono voice to both Left and Right speakers on PCM5100A
-            buffer[i * 2]     = sample32;
-            buffer[i * 2 + 1] = sample32;
+            int32_t val = (int32_t(data[i]) * volume_factor) / 100;
+            // Place 16-bit audio in upper 16 bits of 32-bit slot for PCM5100A DAC
+            int32_t sample32 = val << 16;
+            tx_buf32_[i * 2]     = sample32;
+            tx_buf32_[i * 2 + 1] = sample32;
         }
 
         size_t bytes_written;
-        ESP_ERROR_CHECK(i2s_channel_write(tx_handle_, buffer.data(), samples * 2 * sizeof(int32_t), &bytes_written, portMAX_DELAY));
+        ESP_ERROR_CHECK(i2s_channel_write(tx_handle_, tx_buf32_.data(), samples * 2 * sizeof(int32_t), &bytes_written, portMAX_DELAY));
         return bytes_written / (2 * sizeof(int32_t));
     }
 
@@ -125,97 +165,77 @@ public:
         size_t bytes_read = 0;
         constexpr uint32_t kReadTimeoutMs = 100;
 
-        if (rx_buf_.size() < (size_t)(samples * 2)) {
-            rx_buf_.resize(samples * 2);
+        if (rx_buf32_.size() < (size_t)(samples * 2)) {
+            rx_buf32_.resize(samples * 2);
         }
-        if (i2s_channel_read(rx_handle_, rx_buf_.data(), samples * 2 * sizeof(int32_t), &bytes_read, kReadTimeoutMs) != ESP_OK) {
+        if (i2s_channel_read(rx_handle_, rx_buf32_.data(), samples * 2 * sizeof(int32_t), &bytes_read, kReadTimeoutMs) != ESP_OK) {
             return 0;
         }
 
         int frames = bytes_read / (2 * sizeof(int32_t));
-        int64_t max_l = 0, max_r = 0;
+        int32_t max_l = 0, max_r = 0;
         for (int i = 0; i < frames; i++) {
-            int32_t left = rx_buf_[i * 2];
-            int32_t right = rx_buf_[i * 2 + 1];
-            int64_t al = std::abs((int64_t)left);
-            int64_t ar = std::abs((int64_t)right);
+            // INMP441 outputs 24 bits placed at bits [31:8] in 32-bit slot.
+            // Right shift by 14 preserves sign, maps to 16-bit and provides +12dB digital gain.
+            int32_t l_val = rx_buf32_[i * 2] >> 14;
+            int32_t r_val = rx_buf32_[i * 2 + 1] >> 14;
+            int16_t s_l = (l_val > INT16_MAX) ? INT16_MAX : (l_val < INT16_MIN) ? INT16_MIN : (int16_t)l_val;
+            int16_t s_r = (r_val > INT16_MAX) ? INT16_MAX : (r_val < INT16_MIN) ? INT16_MIN : (int16_t)r_val;
+            int32_t al = std::abs((int32_t)s_l);
+            int32_t ar = std::abs((int32_t)s_r);
             if (al > max_l) max_l = al;
             if (ar > max_r) max_r = ar;
-
-            // Auto-detect active channel (whether INMP441 L/R pin is tied to GND or VDD/float)
-            int32_t raw = (al >= ar) ? left : right;
-
-            // INMP441 produces 24-bit MSB-aligned samples in 32-bit slot (bits 31..8).
-            // >> 14 preserves 18-bit dynamic range with +12dB digital gain for MEMS voice clarity.
-            int32_t value = raw >> 14;
-            dest[i] = (value > INT16_MAX) ? INT16_MAX : (value < -INT16_MAX) ? -INT16_MAX : static_cast<int16_t>(value);
         }
 
-        // Periodic diagnostic telemetry for mic input (every 3 seconds)
+        static int active_channel = 0; // 0=Left, 1=Right
+        if (max_l > max_r * 2 && max_l > 50) {
+            active_channel = 0;
+        } else if (max_r > max_l * 2 && max_r > 50) {
+            active_channel = 1;
+        }
+
+        for (int i = 0; i < frames; i++) {
+            int32_t raw = (active_channel == 0) ? rx_buf32_[i * 2] : rx_buf32_[i * 2 + 1];
+            int32_t shifted = raw >> 14;
+            dest[i] = (shifted > INT16_MAX) ? INT16_MAX : (shifted < INT16_MIN) ? INT16_MIN : (int16_t)shifted;
+        }
+
+        // Periodic diagnostic telemetry for mic input (every 2 seconds)
         static int64_t last_mic_log = 0;
         int64_t now = esp_timer_get_time() / 1000;
-        if (now - last_mic_log > 3000) {
+        if (now - last_mic_log > 2000) {
             last_mic_log = now;
-            ESP_LOGI(TAG, "[Mic Diagnostic] frames=%d, peak_L=%lld, peak_R=%lld (ch=%s)",
-                     frames, max_l >> 14, max_r >> 14, (max_l >= max_r) ? "LEFT" : "RIGHT");
+            int b_hi = 0, w_hi = 0, d_hi = 0;
+            for (int k = 0; k < 500; k++) {
+                if (gpio_get_level(PIN_I2S_BCLK)) b_hi++;
+                if (gpio_get_level(PIN_I2S_WS)) w_hi++;
+                if (gpio_get_level(PIN_I2S_DIN)) d_hi++;
+            }
+            ESP_LOGI(TAG, "[Mic Diagnostic] frames=%d, raw0=0x%08lX, raw1=0x%08lX, maxL=%ld, maxR=%ld (BCLK=%d/500, WS=%d/500, DIN=%d/500, ch=%s)",
+                     frames, (unsigned long)rx_buf32_[0], (unsigned long)rx_buf32_[1],
+                     (long)max_l, (long)max_r, b_hi, w_hi, d_hi, (active_channel == 0) ? "LEFT" : "RIGHT");
         }
 
         return frames;
     }
 
 protected:
-    std::vector<int32_t> rx_buf_;
-    bool tx_running_ = false;
-    bool rx_running_ = false;
+    std::vector<int32_t> rx_buf32_;
+    std::vector<int32_t> tx_buf32_;
 
-    void SetTxRunning(bool run) {
-        if (run && !tx_running_) {
-            ESP_ERROR_CHECK(i2s_channel_enable(tx_handle_));
-            tx_running_ = true;
-        } else if (!run && tx_running_) {
-            ESP_ERROR_CHECK(i2s_channel_disable(tx_handle_));
-            tx_running_ = false;
-        }
-    }
-
-    void SetRxRunning(bool run) {
-        if (run && !rx_running_) {
-            ESP_ERROR_CHECK(i2s_channel_enable(rx_handle_));
-            rx_running_ = true;
-        } else if (!run && rx_running_) {
-            ESP_ERROR_CHECK(i2s_channel_disable(rx_handle_));
-            rx_running_ = false;
-        }
-    }
 
     void EnableInput(bool enable) override {
         std::lock_guard<std::mutex> lock(data_if_mutex_);
-        if (enable == input_enabled_) return;
-        if (enable) {
-            SetTxRunning(true);  // Master clock (BCLK & WS) for INMP441
-            SetRxRunning(true);
-        } else {
-            SetRxRunning(false);
-            if (!output_enabled_) {
-                SetTxRunning(false);
-            }
-        }
         AudioCodec::EnableInput(enable);
     }
 
     void EnableOutput(bool enable) override {
         std::lock_guard<std::mutex> lock(data_if_mutex_);
         if (enable == output_enabled_) return;
-        if (static_cast<int>(PIN_AMP_SD) >= 0 && !enable) gpio_set_level(PIN_AMP_SD, 0);
-        if (enable) {
-            SetTxRunning(true);
-        } else {
-            if (!input_enabled_) {
-                SetTxRunning(false);
-            }
+        if (static_cast<int>(PIN_AMP_SD) >= 0) {
+            gpio_set_level(PIN_AMP_SD, enable ? 1 : 0);
         }
         AudioCodec::EnableOutput(enable);
-        if (static_cast<int>(PIN_AMP_SD) >= 0 && enable) gpio_set_level(PIN_AMP_SD, 1);
     }
 };
 

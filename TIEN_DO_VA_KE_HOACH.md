@@ -29,7 +29,7 @@
 - **Tối ưu Driver non-blocking:** Đổi sang cơ chế đọc ngắt liên tục non-blocking trong `vl53l0x.h` (mỗi lần đọc chỉ tốn **0.2ms** I2C, không làm nghẽn CPU).
 - **Ngưỡng kích hoạt chuẩn xác $\le 5.0\text{ cm}$ ($\le 50\text{ mm}$):**
   - Khi cún đứng trên bàn, khoảng cách thông thường xa hơn 6cm -> cún đứng yên ngoan ngoãn ở chế độ Chờ (Idle), **không bị tự động nghe nói liên tục**.
-  - **Chốt cờ 1 lần (Edge-triggered):** Đưa tay vào sát mũi cún ($\le 5\text{ cm}$, $\le 50\text{ mm}$) chỉ kích hoạt lắng nghe **đúng 1 lần**. Khi tay rút ra xa ($> 7\text{ cm}$) cờ mới tự mở lại cho lần chạm tiếp theo.
+  - **Chốt cờ 1 lần (Edge-triggered):** Đưa tay vào sát mũi cún ($\le 5\text{ cm}$, $\le 50\text{ mm}$) chỉ kích hoạt lắng nghe **đúng 1 lần**. Khi tay rút ra xa ($> 6\text{ cm}$, $> 60\text{ mm}$) cờ mới tự mở lại cho lần chạm tiếp theo.
   - Khi cún đang nói, đưa tay vào sát mũi ($\le 5\text{ cm}$) sẽ ngắt lời cún tức thì.
 
 ---
@@ -47,10 +47,22 @@
 
 ---
 
-### 5. Hệ thống Âm thanh & Màn hình RoboEyes
-- **Loa PCM5100A & Mic INMP441:** Full-duplex 32-bit Stereo Duplex (`BCK = 64 * Fs`). Đồng bộ tần số lấy mẫu phần cứng 24 kHz cho cả TX/RX; kích hoạt tự động bộ chuyển đổi âm thanh (Audio Resampler 24kHz -> 16kHz) của ESP-ADF cho AFE/VAD nhận diện giọng nói cực chuẩn.
-- **Tự động nhận diện kênh Mic INMP441:** Hỗ trợ cả 2 trường hợp chân L/R nối GND (Left slot) hoặc nối 3.3V/treo (Right slot), kèm bộ khuếch đại gain số +12dB và log chẩn đoán biên độ âm thanh thời gian thực.
-- **Màn hình mắt RoboEyes (ST7789/ILI9341):** Đổi cảm xúc theo trạng thái máy (Chờ, Kết nối, Lắng nghe, Suy nghĩ, Nói, Vui, Ngạc nhiên).
+### 5. Hệ thống Âm thanh & Microphone INMP441 + Loa PCM5100A
+- **Chuẩn I2S Native 16 kHz - 32-bit Slot Stereo Full-Duplex:**
+  - Đồng bộ Native 16.000 Hz giữa I2S phần cứng, WakeNet, WebRTC VAD và Opus (triệt tiêu 100% chi phí chuyển đổi tần số resampler 24k -> 16k, tiết kiệm thêm 15KB RAM).
+  - Cấu hình 32-bit slot stereo ($64 \text{ BCLK/frame} = 1.024\text{ MHz}$) đúng tuyệt đối theo datasheet phần cứng của INMP441.
+  - Xung nhịp phần cứng kiểm tra trực tiếp qua Serial: `BCLK = 280/500 (56%)`, `WS = 250/500 (50%)` chạy liên tục, cực kỳ ổn định.
+- **Kết quả chẩn đoán đường truyền phần cứng chân Mic SD (GPIO 14):**
+  - Bài test thanh ghi I/O nội: Khi thả nổi (`Floating`) đọc được `0/500 (0V)`, khi bật `Pull-Up` đọc được `500/500 (3.3V)`. Chân GPIO 14 của ESP32 hoàn toàn lành lặn không bị cháy chập.
+  - Hiện tại chân **SD của mạch mic INMP441 chưa tiếp xúc điện hoặc chưa được cấp nguồn**, khiến chân DIN luôn ở trạng thái High-Z (hở mạch) $\rightarrow$ cún vào trạng thái "Đang lắng nghe..." nhưng không thu được tiếng người nói nên AI Server chưa có dữ liệu âm thanh để phản hồi lại ("VẪN K NÓI LẠI").
+  - **Checklist 5 chân mic INMP441 cần kiểm tra dây:**
+    1. `VDD`: Cắm vào chân **3.3V** của ESP32.
+    2. `GND`: Nối chung Mass **GND**.
+    3. `SD`: Nối vào **GPIO 14**.
+    4. `SCK`: Nối vào **GPIO 16** (chung với BCK của loa PCM5100A).
+    5. `WS`: Nối vào **GPIO 17** (chung với WS của loa PCM5100A).
+    6. `L/R`: Nối vào **GND** (Kênh Trái).
+
 
 ---
 
