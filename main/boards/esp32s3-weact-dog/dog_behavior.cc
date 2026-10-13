@@ -223,17 +223,17 @@ void DogBehavior::Loop() {
         }
 
         // 2) Distance Proximity Trigger (VL53L0X):
-        // Chỉ kích hoạt khi khoảng cách ToF <= 6.0 cm (<= 65 mm để bao quát dung sai đo)
+        // Chỉ kích hoạt khi khoảng cách ToF <= 5.0 cm (<= 50 mm)
         // Dùng cờ chốt (Edge-triggered): Chỉ kích hoạt ĐÚNG 1 LẦN khi đưa tay vào sát mũi cún.
-        // Phải rút tay ra xa (> 8.5 cm) rồi đưa lại mới kích hoạt lần kế tiếp. Không bị lặp vô tận!
+        // Phải rút tay ra xa (> 7.0 cm) rồi đưa lại mới kích hoạt lần kế tiếp. Không bị lặp vô tận!
         static bool hand_was_near = false;
-        bool hand_is_near = (has_dist && dist > 0 && dist <= 65);
+        bool hand_is_near = (has_dist && dist > 0 && dist <= 50);
 
         if (hand_is_near && !hand_was_near) {
             hand_was_near = true;
             DeviceState cur_state = app.GetDeviceState();
             if (cur_state == kDeviceStateIdle) {
-                ESP_LOGI(TAG, "🖐️ Dua tay sat mui cún (ToF <= 6cm, %d mm)! Bat lang nghe...", dist);
+                ESP_LOGI(TAG, "🖐️ Dua tay sat mui cún (ToF <= 5cm, %d mm)! Bat lang nghe...", dist);
                 if (sat_down_) {
                     sat_down_ = false;
                     legs_->Play(LegMotion::kStand);
@@ -244,8 +244,8 @@ void DogBehavior::Loop() {
                 ESP_LOGI(TAG, "🖐️ Dua tay sat mui khi dang noi -> Ngat loi!");
                 app.AbortSpeaking(kAbortReasonNone);
             }
-        } else if (!hand_is_near && (dist > 85 || dist == 0)) {
-            // Tay đã rút ra xa (> 8.5 cm), reset cờ để sẵn sàng cho lần chạm tiếp theo
+        } else if (!hand_is_near && (dist > 70 || dist == 0)) {
+            // Tay đã rút ra xa (> 7.0 cm), reset cờ để sẵn sàng cho lần chạm tiếp theo
             hand_was_near = false;
         }
 

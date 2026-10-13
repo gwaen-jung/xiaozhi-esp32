@@ -49,7 +49,7 @@ public:
         };
         ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &tx_handle_, &rx_handle_));
 
-        i2s_std_config_t std_cfg = {
+        i2s_std_config_t tx_std_cfg = {
             .clk_cfg = {
                 .sample_rate_hz = (uint32_t)output_sample_rate_,
                 .clk_src = I2S_CLK_SRC_DEFAULT,
@@ -69,7 +69,7 @@ public:
                 .bclk = PIN_I2S_BCLK,
                 .ws = PIN_I2S_WS,
                 .dout = PIN_I2S_DOUT,
-                .din = PIN_I2S_DIN,
+                .din = I2S_GPIO_UNUSED,
                 .invert_flags = {
                     .mclk_inv = false,
                     .bclk_inv = false,
@@ -77,8 +77,12 @@ public:
                 },
             },
         };
-        ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx_handle_, &std_cfg));
-        ESP_ERROR_CHECK(i2s_channel_init_std_mode(rx_handle_, &std_cfg));
+        ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx_handle_, &tx_std_cfg));
+
+        i2s_std_config_t rx_std_cfg = tx_std_cfg;
+        rx_std_cfg.gpio_cfg.dout = I2S_GPIO_UNUSED;
+        rx_std_cfg.gpio_cfg.din = PIN_I2S_DIN;
+        ESP_ERROR_CHECK(i2s_channel_init_std_mode(rx_handle_, &rx_std_cfg));
 
         output_volume_ = AUDIO_DEFAULT_OUTPUT_VOLUME;
         if (static_cast<int>(PIN_AMP_SD) >= 0) {
@@ -161,10 +165,56 @@ public:
 
 protected:
     std::vector<int32_t> rx_buf_;
+    bool tx_running_ = false;
+    bool rx_running_ = false;
+
+    void SetTxRunning(bool run) {
+        if (run && !tx_running_) {
+            ESP_ERROR_CHECK(i2s_channel_enable(tx_handle_));
+            tx_running_ = true;
+        } else if (!run && tx_running_) {
+            ESP_ERROR_CHECK(i2s_channel_disable(tx_handle_));
+            tx_running_ = false;
+        }
+    }
+
+    void SetRxRunning(bool run) {
+        if (run && !rx_running_) {
+            ESP_ERROR_CHECK(i2s_channel_enable(rx_handle_));
+            rx_running_ = true;
+        } else if (!run && rx_running_) {
+            ESP_ERROR_CHECK(i2s_channel_disable(rx_handle_));
+            rx_running_ = false;
+        }
+    }
+
+    void EnableInput(bool enable) override {
+        std::lock_guard<std::mutex> lock(data_if_mutex_);
+        if (enable == input_enabled_) return;
+        if (enable) {
+            SetTxRunning(true);  // Master clock (BCLK & WS) for INMP441
+            SetRxRunning(true);
+        } else {
+            SetRxRunning(false);
+            if (!output_enabled_) {
+                SetTxRunning(false);
+            }
+        }
+        AudioCodec::EnableInput(enable);
+    }
 
     void EnableOutput(bool enable) override {
+        std::lock_guard<std::mutex> lock(data_if_mutex_);
+        if (enable == output_enabled_) return;
         if (static_cast<int>(PIN_AMP_SD) >= 0 && !enable) gpio_set_level(PIN_AMP_SD, 0);
-        NoAudioCodec::EnableOutput(enable);
+        if (enable) {
+            SetTxRunning(true);
+        } else {
+            if (!input_enabled_) {
+                SetTxRunning(false);
+            }
+        }
+        AudioCodec::EnableOutput(enable);
         if (static_cast<int>(PIN_AMP_SD) >= 0 && enable) gpio_set_level(PIN_AMP_SD, 1);
     }
 };
