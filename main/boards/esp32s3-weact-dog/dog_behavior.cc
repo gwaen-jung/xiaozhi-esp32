@@ -244,8 +244,8 @@ void DogBehavior::Loop() {
                 ESP_LOGI(TAG, "🖐️ Dua tay sat mui khi dang noi -> Ngat loi!");
                 app.AbortSpeaking(kAbortReasonNone);
             }
-        } else if (!hand_is_near && (dist > 70 || dist == 0)) {
-            // Tay đã rút ra xa (> 7.0 cm), reset cờ để sẵn sàng cho lần chạm tiếp theo
+        } else if (!hand_is_near && (dist > 60 || dist == 0)) {
+            // Tay đã rút ra xa (> 6.0 cm), reset cờ để sẵn sàng cho lần chạm tiếp theo
             hand_was_near = false;
         }
 

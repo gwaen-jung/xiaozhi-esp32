@@ -3,9 +3,9 @@
 
 #include "board_pins.h"
 
-// Audio: Full-duplex I2S runs at 24 kHz (shared BCLK/WS). AudioService downsamples mic to 16 kHz for VAD/Opus.
-#define AUDIO_INPUT_SAMPLE_RATE  24000
-#define AUDIO_OUTPUT_SAMPLE_RATE 24000
+// Audio: Full-duplex I2S runs at 16 kHz native (matches VAD, WakeNet & Opus perfectly, 0% CPU resample overhead).
+#define AUDIO_INPUT_SAMPLE_RATE  16000
+#define AUDIO_OUTPUT_SAMPLE_RATE 16000
 // Conservative default for small 4 ohm speakers (0..100, changeable by voice).
 #define AUDIO_DEFAULT_OUTPUT_VOLUME 60
 // TODO(hw-verify): 1 = drive both I2S slots (dual speaker amp), 0 = left only.

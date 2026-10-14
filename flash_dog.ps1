@@ -27,4 +27,4 @@ time.sleep(0.2)
 s.close()
 "
 
-python -m esptool --chip esp32s3 -p $Port -b 921600 --before no-reset --after hard-reset write-flash --flash-mode dio --flash-size 16MB --flash-freq 80m 0x20000 build\xiaozhi.bin
+python -m esptool --chip esp32s3 -p $Port -b 460800 --before no-reset --after hard-reset write-flash --flash-mode dio --flash-size 16MB --flash-freq 80m 0x8000 build\partition_table\partition-table.bin 0xd000 build\ota_data_initial.bin 0x20000 build\xiaozhi.bin
