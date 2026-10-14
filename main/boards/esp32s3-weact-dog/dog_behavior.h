@@ -1,5 +1,5 @@
-// DogBehavior: maps device state + server emotions to eyes and legs.
-// All mapping tables live in dog_behavior.cc.
+// DogBehavior: maps device state + server emotions to the eyes.
+// All mapping tables live in dog_behavior.cc. (Servo legs are disabled.)
 #pragma once
 
 #include <freertos/FreeRTOS.h>
@@ -8,14 +8,11 @@
 
 #include "device_state.h"
 #include "eyes_display.h"
-#include "leg_servos.h"
 
 class DogBehavior {
 public:
-    DogBehavior(EyesDisplay* eyes, LegServos* legs);
+    explicit DogBehavior(EyesDisplay* eyes);
     void Start();
-    void SetDistanceSensor(class VL53L0X* sensor) { sensor_ = sensor; }
-    void SetMotionSensor(class MPU6050* mpu) { mpu_ = mpu; }
 
     // Called from EyesDisplay hooks (any task). Non-blocking.
     void OnEmotion(const char* emotion);
@@ -32,22 +29,20 @@ private:
     void Loop();
     void HandleState(DeviceState state, int64_t now);
     void HandleEmotion(const char* emotion, int64_t now);
+    void IdleFidget(int64_t now);
+    void ScheduleFidget(int64_t now);
 
     EyesDisplay* eyes_;
-    LegServos* legs_;
-    class VL53L0X* sensor_ = nullptr;
-    class MPU6050* mpu_ = nullptr;
     QueueHandle_t events_ = nullptr;
     TaskHandle_t task_ = nullptr;
 
     DeviceState state_ = kDeviceStateUnknown;
-    bool servos_started_ = false;
     bool thinking_ = false;
-    bool sat_down_ = false;
-    bool was_picked_up_ = false;
+    bool sleepy_ = false;
+    bool emotion_active_ = false;  // a server emotion is showing (fades after a while)
     int64_t state_since_ms_ = 0;
-    int64_t last_wiggle_ms_ = 0;
+    int64_t emotion_since_ms_ = 0;
     int64_t surprise_until_ms_ = 0;
-    int64_t last_proximity_trigger_ms_ = 0;
-    int64_t last_telemetry_ms_ = 0;
+    int64_t next_fidget_ms_ = 0;
+    int64_t fidget_end_ms_ = 0;
 };

@@ -1,52 +1,29 @@
 # esp32s3-weact-dog: XIAOZHI desk dog robot
 
 WeAct ESP32-S3 CoreBoard N16R8 + ILI9341 2.4" TFT (animated RoboEyes) + INMP441 mic
-+ I2S amp + 4 hobby servos as symbolic legs. Chats through the Xiaozhi cloud.
++ PCM5100A I2S DAC. Chats through the Xiaozhi cloud. Servo legs are disabled.
 
-## Hardware Specification & Verification Status
-- **SoC**: ESP32-S3 WeAct Studio CoreBoard (N16R8: 16MB Flash, 8MB Octal PSRAM)
-- **LCD Display**: 2.4 inch SPI TFT LCD (Driver: **ILI9341**, 240x320, FSPI port)
-- **Audio DAC & Amp**: WeAct Studio **PCM5100A** I2S DAC + Dual Speaker Module
-  - *Lưu ý đấu nối*: Chân `MC` (Master Clock) nối xuống **GND** để dùng bộ tạo xung nội PLL. Chân `SD` kéo lên **VCC (3.3V)** hoặc để NC nếu có điện trở pull-up.
-- **Microphone**: **INMP441** MEMS I2S Omnidirectional Microphone
-- **Servos**: 4x Hobby Micro Servos (9g SG90/MG90S)
-  - Chân trên trái (FL): GPIO 7 (180°) | Chân trên phải (FR): GPIO 4 (Servo 360°)
-  - Chân dưới trái (RL): GPIO 6 (180°) | Chân dưới phải (RR): GPIO 5 (180°)
-  - *Ghi chú phần cứng*: Chân trên phải (GPIO 4) là servo 360° quay liên tục (được điều khiển giữ deadband 90°).
-- **Cảm biến tiếp theo (Cập nhật)**:
-  - Cảm biến khoảng cách Laser ToF: **VL53L0X** (I2C: SDA GPIO 8, SCL GPIO 9, địa chỉ mặc định `0x29`)
-  - Cảm biến định hướng / IMU: **MPU-6050** (I2C: SDA GPIO 8, SCL GPIO 9, địa chỉ mặc định `0x68`)
-  - Tích hợp đàm thoại AI Voice Chatbot (Xiaozhi Client)
-  - Đã đăng ký MCP Tools: `self.control_dog_legs`, `self.get_front_distance`
+## Wiring
 
-## Wiring Table
-
-| Function | ESP32-S3 GPIO | Module pin / Wiring Note |
+| Function | ESP32-S3 GPIO | Module pin |
 |---|---|---|
 | TFT SCLK | 40 | SCK |
 | TFT MOSI | 41 | SDI (MOSI) |
-| TFT MISO | 42 (optional, unused) | SDO (MISO) |
 | TFT CS | 39 | CS |
 | TFT DC | 38 | DC / RS |
 | TFT RST | 47 | RESET |
-| TFT LED | 3.3 V | LED (Backlight) |
-| TFT VCC / GND | 3.3 V / GND | Nguồn màn hình |
-| I2S BCLK (shared) | 16 | PCM5100A BCK + INMP441 SCK |
-| I2S WS (shared) | 17 | PCM5100A WS + INMP441 WS |
-| Mic Data (DIN) | 14 | INMP441 SD |
-| Mic L/R, GND, VDD | GND, GND, 3.3 V | L/R nối GND (Left channel) |
-| Speaker Data (DOUT) | 15 | PCM5100A DIN |
-| PCM5100A MC | GND | Nối GND để bật PLL nội |
-| PCM5100A SD | 3.3 V (hoặc NC) | Kéo HIGH bật audio |
-| Servo Trên Trái (FL) | 7 | Signal (180°) |
-| Servo Trên Phải (FR) | 4 | Signal (Servo 360°) |
-| Servo Dưới Trái (RL) | 6 | Signal (180°) |
-| Servo Dưới Phải (RR) | 5 | Signal (180°) |
-| Servo V+ / GND | 5 V / GND | Chung GND với ESP32 |
-| I2C SDA (ToF / MPU6050) | 8 | Cảm biến Laser VL53L0X & MPU6050 |
-| I2C SCL (ToF / MPU6050) | 9 | Cảm biến Laser VL53L0X & MPU6050 |
-| Push-to-talk | 0 | BOOT button on the board |
-| Status LED | 48 | Onboard WS2812 |
+| TFT LED, VCC / GND | 3.3 V / GND | |
+| I2S BCLK (shared) | 16 | INMP441 SCK + PCM5100A BCK |
+| I2S WS (shared) | 17 | INMP441 WS + PCM5100A LCK |
+| Mic data in | 14 | INMP441 SD (L/R -> GND) |
+| DAC data out | 15 | PCM5100A DIN (SCK/MC -> GND, XSMT -> 3.3 V) |
+| Servo FL / FR / RL / RR | 7 / 4 / 6 / 5 | **disabled**, held LOW |
+| Push-to-talk | 0 | BOOT button |
+| Status LED | 48 | onboard WS2812 |
+| Reserved | 8 SDA / 9 SCL / 21 XSHUT (ToF, IMU), 1 (wake button) | not used yet |
+
+All pins are defined only in `board_pins.h`. Mic and DAC share one full-duplex
+I2S port at 16 kHz, 32-bit slots.
 
 ## Build (ESP-IDF v6.0.1 or newer)
 
@@ -82,39 +59,48 @@ compiled into the firmware.
 | What | Where |
 |---|---|
 | Pins | `board_pins.h` |
-| Panel orientation, colour order, SPI speed, audio rates, default volume | `config.h` |
-| Eye colours, sizes, fps; servo trims, directions, range, speed, safety limits | `dog_config.h` |
-| State/emotion -> eyes + legs | tables at the top of `dog_behavior.cc` |
-| Leg poses and motions | keyframe tables at the top of `leg_servos.cc` |
+| Panel orientation, colour order, SPI speed, audio rate, default volume | `config.h` |
+| Eye colours per mood, sizes, fps, overlay colours, idle timings | `dog_config.h` |
+| State/emotion -> eyes | tables at the top of `dog_behavior.cc` |
+| Wi-Fi buffers (PSRAM) | `config.json` `sdkconfig_append` |
 
-Volume can also be changed by voice ("turn the volume down"). Things to check on the
-real hardware are listed in `docs/HARDWARE_TODO.md`.
+Volume can also be changed by voice ("giam am luong").
 
 ## Behaviour
 
-| Trigger | Eyes | Legs |
-|---|---|---|
-| Boot | open from closed | (servos attach one by one once Wi-Fi + audio are up) then stand |
-| Idle | default, blink, drift | stand; sit after 60 s, then PWM off |
-| Listening | wide, centred, curious | stand |
-| Thinking (your words received) | look up-left | |
-| Speaking | keep emotion, centred | soft wiggle every 3.5 s |
-| happy / funny / loving / delicious | happy | wiggle |
-| laughing | happy + laugh | wave |
-| sad / crying | droopy | crouch |
-| embarrassed | droopy | |
-| angry | angry | |
-| surprised / shocked | wide + curious 1.5 s | quick stand |
-| confused / thinking | confused shake | |
-| sleepy / relaxed | droopy, slow blink | |
-| Wi-Fi setup / errors | sweat | |
-| anything else | default | |
+| Trigger | Eyes |
+|---|---|
+| Boot | open from closed |
+| Idle | cyan, blink, drift; random look-around / wink / smile every 12-25 s; sleepy + Zzz after 3 min |
+| Listening | wide, centred, curious |
+| Thinking (your words received) / connecting | look up-left, light blue, "?" |
+| Speaking | keeps the emotion, gentle bob; reply text shown as subtitle |
+| happy | yellow, sparkles |
+| laughing / funny | yellow, laugh shake, music notes |
+| loving | pink, floating hearts, blush |
+| kissy | wink + hearts + blush |
+| delicious | happy + tongue |
+| sad | blue, droopy, looks down |
+| crying | blue, droopy, falling tears |
+| embarrassed | pink, looks away, blush + sweat |
+| angry | red, angry lids, anger mark |
+| surprised | white, wide, "!" |
+| shocked | white, wide, shake, "!" |
+| confused | violet, shake, "?" |
+| sleepy | grey-blue, droopy, slow blink, Zzz |
+| relaxed | green, half-closed |
+| winking | wink + sparkles |
+| cool / confident | sunglasses with moving glint |
+| silly | orange, wobble, music notes |
+| Wi-Fi setup / errors | orange, sweat |
 
-## Power safety (servos)
+## Wi-Fi stability
 
-Max 2 servos moving at once, start-ups 80 ms apart, 90 deg/s ramps, logical range
-45..135 deg, PWM cut after a pose is held 1 s. The reset reason is logged at every
-boot; `BROWNOUT` points to the battery/boost converter.
+- Radio power save is forced off (`SetPowerSaveLevel` -> PERFORMANCE): no modem sleep,
+  lower latency, fewer router-side disconnects.
+- Wi-Fi/LWIP buffers moved to PSRAM and enlarged (more RX/TX buffers, bigger BA window
+  and TCP window) so the voice stream does not stall on packet bursts.
+- Servos removed: no more current spikes / brownouts that used to drop Wi-Fi.
 
 ## License
 
