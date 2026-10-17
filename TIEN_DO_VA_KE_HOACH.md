@@ -72,7 +72,7 @@ Khi cần build hoặc nạp lại firmware:
 
 1. **Biên dịch:**
    ```powershell
-   cd "c:\Users\trung\Downloads\xiaozhi-esp32-dog\xiaozhi-esp32"
+   cd "D:\TRIAD_PROJECT\Projects\xiaozhi-esp32-dog\xiaozhi-esp32"
    powershell -File .\build_dog.ps1
    ```
 

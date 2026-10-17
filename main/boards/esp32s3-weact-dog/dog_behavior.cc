@@ -83,7 +83,7 @@ int64_t now_ms() { return esp_timer_get_time() / 1000; }
 int64_t rand_between(int64_t lo, int64_t hi) { return lo + (int64_t)(esp_random() % (uint32_t)(hi - lo + 1)); }
 }  // namespace
 
-DogBehavior::DogBehavior(EyesDisplay* eyes) : eyes_(eyes) {
+DogBehavior::DogBehavior(EyesDisplay* eyes, LegServos* legs) : eyes_(eyes), legs_(legs) {
     events_ = xQueueCreate(8, sizeof(Event));
 }
 
@@ -127,6 +127,19 @@ void DogBehavior::HandleState(DeviceState state, int64_t now) {
 
     eyes_->SetSpeaking(state == kDeviceStateSpeaking);
 
+    if (legs_ != nullptr) {
+        if (!servos_started_ && (state == kDeviceStateIdle || state == kDeviceStateListening || state == kDeviceStateSpeaking)) {
+            servos_started_ = true;
+            legs_->AttachSequential();
+            legs_->Play(LegMotion::kStand);
+        } else if (servos_started_) {
+            if (sat_down_ && (state == kDeviceStateListening || state == kDeviceStateSpeaking)) {
+                sat_down_ = false;
+                legs_->Play(LegMotion::kStand);
+            }
+        }
+    }
+
     // After a conversation, keep the last emotion on screen for a moment
     // instead of snapping straight back to the idle look.
     if (state == kDeviceStateIdle && prev == kDeviceStateSpeaking && emotion_active_) {
@@ -158,6 +171,17 @@ void DogBehavior::HandleEmotion(const char* emotion, int64_t now) {
         if (r.eyes == EyePreset::kSurprised) surprise_until_ms_ = now + DOG_SURPRISE_MS;
         emotion_active_ = true;
         emotion_since_ms_ = now;
+        if (legs_ != nullptr && legs_->attached()) {
+            if (strcmp(emotion, "happy") == 0 || strcmp(emotion, "laughing") == 0 ||
+                strcmp(emotion, "funny") == 0 || strcmp(emotion, "silly") == 0) {
+                legs_->Play(LegMotion::kWiggle);
+            } else if (strcmp(emotion, "winking") == 0 || strcmp(emotion, "cool") == 0 ||
+                       strcmp(emotion, "confident") == 0) {
+                legs_->Play(LegMotion::kWave);
+            } else if (strcmp(emotion, "sad") == 0 || strcmp(emotion, "crying") == 0) {
+                legs_->Play(LegMotion::kCrouch);
+            }
+        }
         return;
     }
     ESP_LOGW(TAG, "unknown emotion '%s' -> neutral", emotion);
@@ -206,6 +230,10 @@ void DogBehavior::Loop() {
         }
 
         if (state_ == kDeviceStateIdle) {
+            if (legs_ != nullptr && legs_->attached() && !sat_down_ && now - state_since_ms_ > DOG_IDLE_SIT_AFTER_MS) {
+                sat_down_ = true;
+                legs_->Play(LegMotion::kSit);
+            }
             if (emotion_active_ && now - emotion_since_ms_ > DOG_EMOTION_HOLD_MS / 2) {
                 emotion_active_ = false;  // post-chat emotion has been shown long enough
                 eyes_->ApplyPreset(EyePreset::kIdle);

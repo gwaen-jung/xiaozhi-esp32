@@ -1,5 +1,5 @@
-// DogBehavior: maps device state + server emotions to the eyes.
-// All mapping tables live in dog_behavior.cc. (Servo legs are disabled.)
+// DogBehavior: maps device state + server emotions to the eyes and servo legs.
+// All mapping tables live in dog_behavior.cc.
 #pragma once
 
 #include <freertos/FreeRTOS.h>
@@ -8,10 +8,11 @@
 
 #include "device_state.h"
 #include "eyes_display.h"
+#include "leg_servos.h"
 
 class DogBehavior {
 public:
-    explicit DogBehavior(EyesDisplay* eyes);
+    DogBehavior(EyesDisplay* eyes, LegServos* legs = nullptr);
     void Start();
 
     // Called from EyesDisplay hooks (any task). Non-blocking.
@@ -33,10 +34,13 @@ private:
     void ScheduleFidget(int64_t now);
 
     EyesDisplay* eyes_;
+    LegServos* legs_ = nullptr;
     QueueHandle_t events_ = nullptr;
     TaskHandle_t task_ = nullptr;
 
     DeviceState state_ = kDeviceStateUnknown;
+    bool servos_started_ = false;
+    bool sat_down_ = false;
     bool thinking_ = false;
     bool sleepy_ = false;
     bool emotion_active_ = false;  // a server emotion is showing (fades after a while)

@@ -23,13 +23,11 @@
 #define PIN_I2S_DIN   GPIO_NUM_14  // INMP441 SD  -> ESP32
 #define PIN_I2S_DOUT  GPIO_NUM_15  // ESP32 -> PCM5100A DIN
 
-// ---- Servo legs: DISABLED ---------------------------------------------------
-// The legs are not driven by this firmware. The signal pins are held LOW at
-// boot so the servos get no pulses and stay limp and quiet.
-#define PIN_SERVO_FL  GPIO_NUM_7
-#define PIN_SERVO_FR  GPIO_NUM_4
-#define PIN_SERVO_RL  GPIO_NUM_6
-#define PIN_SERVO_RR  GPIO_NUM_5
+// ---- Servo legs: 4 PWM outputs (FL, FR, RL, RR) -----------------------------
+#define PIN_SERVO_FL  GPIO_NUM_7  // Front-Left (180°)
+#define PIN_SERVO_FR  GPIO_NUM_4  // Front-Right (360° continuous rotation)
+#define PIN_SERVO_RL  GPIO_NUM_6  // Rear-Left (360° continuous rotation)
+#define PIN_SERVO_RR  GPIO_NUM_5  // Rear-Right (180°)
 
 // ---- I2C sensors -----------------------------------------------------------
 // VL53L0X ToF at 0x29 (hand < 5 cm -> start listening). MPU6050 (0x68) shares
