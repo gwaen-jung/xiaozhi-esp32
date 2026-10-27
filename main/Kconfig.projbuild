@@ -605,6 +605,9 @@ choice BOARD_TYPE
     config BOARD_TYPE_WDMOMO_CGC_144
         bool "WDMomo ESP32-CGC-144"
         depends on IDF_TARGET_ESP32
+    config BOARD_TYPE_ESP32S3_COMPANION_ROBOT
+        bool "ESP32-S3 Companion Robot (SSD1306 + INMP441 + MAX98357A + L298N)"
+        depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_ESP32S3_WEACT_DOG
         bool "WeAct ESP32-S3 XIAOZHI Dog Robot"
         depends on IDF_TARGET_ESP32S3
