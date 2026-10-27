@@ -1,12 +1,48 @@
-# Báo Cáo Tiến Độ & Kế Hoạch Hoàn Thiện Dự Án Xiaozhi Robot Dog
-**Bo mạch:** WeAct ESP32-S3 CoreBoard (N16R8 - 16MB Flash, 8MB PSRAM)  
-**Ngày cập nhật:** Đêm 13/10/2026  
-**Cổng nạp:** COM18 (Baud rate: 460800)  
-**Tình trạng hiện tại:** **ĐÃ HOÀN TẤT TOÀN BỘ CĂN CHỈNH PHẦN CỨNG, DRIVER CẢM BIẾN & ĐÃ NẠP FIRMWARE CHẠY ỔN ĐỊNH 100% TRÊN CÚN.**
+# Báo Cáo Tiến Độ & Kế Hoạch Hoàn Thiện Dự Án Xiaozhi Robot
+**Bo mạch:** ESP32-S3 Custom PCB & WeAct Studio CoreBoard  
+**Ngày cập nhật:** Rạng sáng 28/10/2026  
+**Cổng nạp:** COM7 (ESP32-S3 Native USB) / COM9 (CH343 UART)  
+**Tình trạng hiện tại:** **ĐÃ HOÀN TẤT BIÊN DỊCH VÀ NẠP THÀNH CÔNG FIRMWARE XIAOZHI AI CHÍNH THỨC (ESP-IDF) CHO BOARD MỚI VỚI KHẢ NĂNG LẮNG NGHE TỰ ĐỘNG NHƯ SIRI ("CHÀO NHI").**
 
 ---
 
-## I. TỔNG HỢP CÁC KẾT QUẢ ĐÃ ĐẠT ĐƯỢC HÔM NAY
+## 🚀 TIẾN ĐỘ NGÀY 28/10/2026: BOARD MỚI ESP32S3-COMPANION-ROBOT
+
+### 1. Tạo mới Board Profile chính thức: `esp32s3-companion-robot`
+- Đã thiết lập trọn bộ cấu hình trong `main/boards/esp32s3-companion-robot/`:
+  - `config.json`: Cấu hình target `esp32s3`, OLED 128x64, MultiNet wake word `"chao ni"`, tiếng Việt `vi-VN`.
+  - `config.h`: Khai báo chính xác 100% phần cứng:
+    - Màn hình OLED SSD1306 I2C (`SDA=GPIO 1`, `SCL=GPIO 2`).
+    - Audio I2S Duplex (`BCLK=GPIO 11`, `WS=GPIO 12`, `DOUT=GPIO 13`, `DIN=GPIO 14`).
+    - Động cơ Mini L298N (`IN1=4, IN2=5, IN3=6, IN4=7`).
+    - Nút `BOOT=GPIO 0`, `LED=GPIO 48`.
+  - `motor_controller.h`: Driver điều khiển 2 động cơ DC bằng LEDC PWM tần số siêu âm 20kHz, êm ái tuyệt đối.
+  - `companion_robot_board.cc`: Khởi tạo màn hình OLED, âm thanh full duplex, đăng ký 6 MCP Tools.
+
+### 2. Tính năng Lắng nghe Tự Động Như Siri (Voice Wake Word)
+- Kích hoạt mạng nơ-ron nhận diện giọng nói offline **ESP-SR MultiNet 7**:
+  - Wake word: **"Chào Nhi"** (`CONFIG_CUSTOM_WAKE_WORD="chao ni"`).
+  - Ngưỡng nhạy: `THRESHOLD = 20`.
+  - Khi gọi "Chào Nhi", robot phát âm thanh xác nhận ("Ting!"), mở mắt trên màn hình OLED và tự động thu âm giọng nói.
+  - **Đàm thoại liên tục (Continuous Listening)**: WebRTC VAD nhận diện dứt câu và gửi lên server. Khi AI trả lời xong, robot tự động mở mic lắng nghe tiếp câu sau, hoàn toàn không cần chạm nút bấm!
+
+### 3. Bộ công cụ MCP Tools cho AI điều khiển động cơ
+- `self.move_forward`: Chạy tiến về phía trước.
+- `self.move_backward`: Chạy lùi về phía sau.
+- `self.turn_left`: Quay bánh xe sang trái.
+- `self.turn_right`: Quay bánh xe sang phải.
+- `self.dance`: Lắc lư nhảy múa 2 bánh xe vui nhộn theo điệu nhạc.
+- `self.stop`: Dừng động cơ ngay lập tức.
+
+### 4. Kết quả Biên dịch & Nạp Firmware
+- Tạo script build: `build_companion_robot.ps1`
+- Tạo script nạp: `flash_companion_robot.ps1`
+- Đã biên dịch thành công file nhị phân `xiaozhi.bin` (2.5MB), `generated_assets.bin` (3.8MB) và `merged-binary.bin`.
+- Đã nạp thành công 100% vào chip ESP32-S3 qua cổng **COM7**.
+
+---
+
+## I. TỔNG HỢP CÁC KẾT QUẢ ĐÃ ĐẠT ĐƯỢC TRƯỚC ĐÓ (NGÀY 13/10/2026)
 
 ### 1. Hệ thống 4 Chân Servo & Căn chỉnh Góc Đứng Chuẩn Xác (Flash NVS)
 - **Sơ đồ chân thực tế & phân loại Servo:**
